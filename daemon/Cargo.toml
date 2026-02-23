@@ -1,0 +1,14 @@
+[package]
+name = "anticheat"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aya = { version = "0.13", features = ["async_tokio"] }
+aya-log = "0.2"
+anticheat-common = { path = "../common", features = ["user"] }
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "signal"] }
+libc = "0.2"
