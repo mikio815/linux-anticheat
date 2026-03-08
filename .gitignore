@@ -1,0 +1,15 @@
+# Rust
+/target/
+ebpf/target/
+
+# eBPF compiled objects
+*.o
+*.d
+
+# Secrets / credentials
+.env
+*.pem
+*.key
+
+# OS
+.DS_Store

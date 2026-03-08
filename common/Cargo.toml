@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-user = []
+user = ["dep:aya"]
 
 [dependencies]
+aya = { git = "https://github.com/aya-rs/aya", optional = true }

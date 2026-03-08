@@ -4,10 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-aya-bpf = { version = "0.1", features = ["macros"] }
-aya-log-ebpf = "0.1"
+aya-ebpf = { git = "https://github.com/aya-rs/aya" }
+aya-log-ebpf = { git = "https://github.com/aya-rs/aya" }
 anticheat-common = { path = "../common" }
 
 [profile.release]
 lto = true
 opt-level = 3
+debug = 2
