@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use aya::maps::{HashMap, MapData, RingBuf};
 use log::info;
-use std::fs;
 use tokio::io::unix::{AsyncFd, AsyncFdReadyMutGuard};
+use tokio::process::Command;
 use tokio::signal;
 use anticheat_common::PtraceEvent;
 
@@ -25,28 +25,51 @@ async fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        anyhow::bail!("usage: anticheat <target_pid>");
+        anyhow::bail!("usage: anticheat <game_binary> [args...]");
     }
-    let target_pid: u32 = args[1].parse().context("target_pid must be integer")?;
-
-    // ターゲット PID が存在するか確認
-    fs::metadata(format!("/proc/{}", target_pid))
-        .with_context(|| format!("pid {} not found", target_pid))?;
+    let game_binary = &args[1];
+    let game_args = &args[2..];
 
     let mut bpf = loader::load(OBJ)?;
 
     let mut protected: HashMap<_, u32, u8> = HashMap::try_from(
         bpf.map_mut("PROTECTED_PROCS").context("PROTECTED_PROCS not found")?,
     )?;
-    protected.insert(target_pid, 1u8, 0)?;
-    info!("protecting pid={}", target_pid);
+
+    let daemon_pid = std::process::id();
+    protected.insert(daemon_pid, 1u8, 0)?;
+    info!("daemon pid={} registered", daemon_pid);
+
+    // Safety: pre_exec は fork 後 exec 前に子プロセスのみで実行される
+    let mut child = unsafe {
+        Command::new(game_binary)
+            .args(game_args)
+            .pre_exec(|| {
+                // 親 (daemon) が死んだら子 (game) も SIGKILL で落とす
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0);
+                Ok(())
+            })
+            .spawn()
+            .context("failed to spawn game")?
+    };
+
+    let game_pid = child.id().context("failed to get game pid")? as u32;
+    protected.insert(game_pid, 1u8, 0)?;
+    info!("game pid={} registered", game_pid);
 
     let ring_buf = RingBuf::try_from(bpf.map_mut("EVENTS").context("EVENTS not found")?)?;
     let mut async_fd = AsyncFd::new(ring_buf)?;
 
     loop {
         tokio::select! {
-            _ = signal::ctrl_c() => break,
+            _ = signal::ctrl_c() => {
+                let _ = child.kill().await;
+                break;
+            }
+            status = child.wait() => {
+                info!("game exited: {:?}", status);
+                break;
+            }
             result = async_fd.readable_mut() => {
                 let mut guard: AsyncFdReadyMutGuard<'_, RingBuf<&mut MapData>> = result?;
                 let rb = guard.get_inner_mut();
