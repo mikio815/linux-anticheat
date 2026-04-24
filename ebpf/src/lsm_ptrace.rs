@@ -18,7 +18,7 @@ const TGID_OFFSET: usize = 1596;
 pub fn ptrace_access_check(ctx: LsmContext) -> i32 {
     match unsafe { try_ptrace_access_check(ctx) } {
         Ok(ret) => ret,
-        Err(_) => 0,
+        Err(_) => -1, // Fail-Closed: 読み取り失敗も拒否
     }
 }
 
