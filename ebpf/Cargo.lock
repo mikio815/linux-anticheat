@@ -11,6 +11,7 @@ name = "anticheat-ebpf"
 version = "0.1.0"
 dependencies = [
  "anticheat-common",
+ "aya-build",
  "aya-ebpf",
  "aya-log-ebpf",
 ]

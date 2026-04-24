@@ -8,6 +8,9 @@ aya-ebpf = { git = "https://github.com/aya-rs/aya" }
 aya-log-ebpf = { git = "https://github.com/aya-rs/aya" }
 anticheat-common = { path = "../common" }
 
+[build-dependencies]
+aya-build = { git = "https://github.com/aya-rs/aya" }
+
 [profile.release]
 lto = true
 opt-level = 3

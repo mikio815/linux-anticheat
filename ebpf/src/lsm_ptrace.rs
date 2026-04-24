@@ -1,30 +1,19 @@
 use aya_ebpf::{
-    helpers::bpf_get_current_pid_tgid,
-    macros::{lsm, tracepoint},
-    programs::{LsmContext, TracePointContext},
+    helpers::{bpf_get_current_pid_tgid, bpf_probe_read_kernel},
+    macros::lsm,
+    programs::LsmContext,
 };
 use anticheat_common::PtraceEvent;
 
-use crate::{EVENTS, PROTECTED_PROCS, PTRACE_ATTEMPTS};
+use crate::{EVENTS, PROTECTED_PROCS};
 
-// sys_enter_ptrace トレースポイントで ptrace の target pid を syscall 引数から読む。
-// task_struct を触らずに済むため CO-RE 不要。
-// tracepoint format (syscalls/sys_enter_ptrace):
-//   offset 16: request (8 bytes)
-//   offset 24: pid     (8 bytes)  ← target pid
-#[tracepoint]
-pub fn sys_enter_ptrace(ctx: TracePointContext) -> u32 {
-    unsafe { handle_enter_ptrace(ctx) }.unwrap_or(0)
-}
+// task_struct::tgid のバイトオフセット。CO-RE 非対応のため固定値。
+// 変更時は Lima 上で以下で再確認すること:
+// bpftool btf dump file /sys/kernel/btf/vmlinux | grep -m1 -A600 '\[205\]' | grep tgid
+// bits_offset を 8 で割った値 (例: bits_offset=12768 → 1596)
+// ref: aya-rs/aya#349
+const TGID_OFFSET: usize = 1596;
 
-unsafe fn handle_enter_ptrace(ctx: TracePointContext) -> Result<u32, i64> {
-    let target_pid = ctx.read_at::<u64>(24)? as u32;
-    let caller_tid = (bpf_get_current_pid_tgid() & 0xffff_ffff) as u32;
-    PTRACE_ATTEMPTS.insert(&caller_tid, &target_pid, 0)?;
-    Ok(0)
-}
-
-// ptrace_access_check LSM フック: PTRACE_ATTEMPTS から target pid を取り出して判定する
 #[lsm(hook = "ptrace_access_check")]
 pub fn ptrace_access_check(ctx: LsmContext) -> i32 {
     match unsafe { try_ptrace_access_check(ctx) } {
@@ -33,27 +22,22 @@ pub fn ptrace_access_check(ctx: LsmContext) -> i32 {
     }
 }
 
-unsafe fn try_ptrace_access_check(_ctx: LsmContext) -> Result<i32, i64> {
-    let pid_tgid = bpf_get_current_pid_tgid();
-    let caller_pid = (pid_tgid >> 32) as u32;
-    let caller_tid = (pid_tgid & 0xffff_ffff) as u32;
+unsafe fn try_ptrace_access_check(ctx: LsmContext) -> Result<i32, i64> {
+    // Safety: child は LSM フックが保証する有効なカーネルポインタ
+    let child: *const u8 = ctx.arg(0);
+    let target_tgid =
+        bpf_probe_read_kernel(child.add(TGID_OFFSET) as *const u32)?;
 
-    let target_pid = match PTRACE_ATTEMPTS.get(&caller_tid) {
-        Some(p) => *p,
-        None => return Ok(0),
-    };
-
-    if PROTECTED_PROCS.get(&target_pid).is_none() {
-        let _ = PTRACE_ATTEMPTS.remove(&caller_tid);
+    if PROTECTED_PROCS.get(&target_tgid).is_none() {
         return Ok(0);
     }
 
-    let _ = PTRACE_ATTEMPTS.remove(&caller_tid);
+    let caller_tgid = (bpf_get_current_pid_tgid() >> 32) as u32;
 
     if let Some(mut entry) = EVENTS.reserve::<PtraceEvent>(0) {
         // Safety: reserve した領域に書き込む
-        (*entry.as_mut_ptr()).caller_pid = caller_pid;
-        (*entry.as_mut_ptr()).target_pid = target_pid;
+        (*entry.as_mut_ptr()).caller_pid = caller_tgid;
+        (*entry.as_mut_ptr()).target_pid = target_tgid;
         entry.submit(0);
     }
 
