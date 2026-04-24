@@ -40,10 +40,17 @@ async fn main() -> Result<()> {
     protected.insert(daemon_pid, 1u8, 0)?;
     info!("daemon pid={} registered", daemon_pid);
 
+    // getenv はフック可能なので /proc/self/environ を直接読む
+    let environ = std::fs::read("/proc/self/environ").context("failed to read /proc/self/environ")?;
+    if environ.split(|&b| b == 0).any(|var| var.starts_with(b"LD_PRELOAD=")) {
+        anyhow::bail!("LD_PRELOAD is set");
+    }
+
     // Safety: pre_exec は fork 後 exec 前に子プロセスのみで実行される
     let mut child = unsafe {
         Command::new(game_binary)
             .args(game_args)
+            .env_remove("LD_PRELOAD") // exec に渡す env を直接操作（unsetenv フック回避）
             .pre_exec(|| {
                 // 親 (daemon) が死んだら子 (game) も SIGKILL で落とす
                 libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0);
