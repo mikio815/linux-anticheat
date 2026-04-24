@@ -1,6 +1,7 @@
 # anticheat
 
 Linux向けのアンチチート
+
 LSM BPFをベースにKMと適当なthin hypervisorを組み合わせる予定です
 
 ## 構成
@@ -14,6 +15,7 @@ common/    eBPF・daemon 共通型定義
 ## 動作概要
 
 daemonがゲームバイナリをfork-execで起動し、自身と子プロセスを保護対象として登録する
+
 daemonが終了するとゲームもSIGKILLで落ちる
 
 ## 要件
