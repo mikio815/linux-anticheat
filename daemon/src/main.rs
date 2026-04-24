@@ -32,8 +32,8 @@ async fn main() -> Result<()> {
 
     let mut bpf = loader::load(OBJ)?;
 
-    let mut protected: HashMap<_, u32, u8> = HashMap::try_from(
-        bpf.map_mut("PROTECTED_PROCS").context("PROTECTED_PROCS not found")?,
+    let mut protected: HashMap<MapData, u32, u8> = HashMap::try_from(
+        bpf.take_map("PROTECTED_PROCS").context("PROTECTED_PROCS not found")?,
     )?;
 
     let daemon_pid = std::process::id();
@@ -57,7 +57,9 @@ async fn main() -> Result<()> {
     protected.insert(game_pid, 1u8, 0)?;
     info!("game pid={} registered", game_pid);
 
-    let ring_buf = RingBuf::try_from(bpf.map_mut("EVENTS").context("EVENTS not found")?)?;
+    let ring_buf: RingBuf<MapData> = RingBuf::try_from(
+        bpf.take_map("EVENTS").context("EVENTS not found")?,
+    )?;
     let mut async_fd = AsyncFd::new(ring_buf)?;
 
     loop {
@@ -68,10 +70,11 @@ async fn main() -> Result<()> {
             }
             status = child.wait() => {
                 info!("game exited: {:?}", status);
+                let _ = protected.remove(&game_pid);
                 break;
             }
             result = async_fd.readable_mut() => {
-                let mut guard: AsyncFdReadyMutGuard<'_, RingBuf<&mut MapData>> = result?;
+                let mut guard: AsyncFdReadyMutGuard<'_, RingBuf<MapData>> = result?;
                 let rb = guard.get_inner_mut();
                 while let Some(item) = rb.next() {
                     let item: &[u8] = &item;
