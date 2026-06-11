@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use aya::{Ebpf, Btf};
+use aya::{Btf, Ebpf};
 use aya::programs::Lsm;
 
 pub fn load(obj_bytes: &'static [u8]) -> Result<Ebpf> {
@@ -7,12 +7,18 @@ pub fn load(obj_bytes: &'static [u8]) -> Result<Ebpf> {
 
     let mut bpf = Ebpf::load(obj_bytes)?;
 
-    let lsm: &mut Lsm = bpf
-        .program_mut("ptrace_access_check")
-        .context("ptrace_access_check not found")?
-        .try_into()?;
-    lsm.load("ptrace_access_check", &btf)?;
-    lsm.attach()?;
+    // (eBPF 関数名, LSM フック名 = BTF 型名)
+    for (prog_name, hook_name) in &[
+        ("ptrace_access_check", "ptrace_access_check"),
+        ("bpf_hook", "bpf"),
+    ] {
+        let lsm: &mut Lsm = bpf
+            .program_mut(prog_name)
+            .with_context(|| format!("{prog_name} not found"))?
+            .try_into()?;
+        lsm.load(hook_name, &btf)?;
+        lsm.attach()?;
+    }
 
     Ok(bpf)
 }

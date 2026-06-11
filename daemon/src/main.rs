@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use aya::maps::{HashMap, MapData, RingBuf};
+use aya::programs::loaded_links;
 use log::info;
 use tokio::io::unix::{AsyncFd, AsyncFdReadyMutGuard};
 use tokio::process::Command;
@@ -35,6 +36,28 @@ async fn main() -> Result<()> {
     let mut protected: HashMap<MapData, u32, u8> = HashMap::try_from(
         bpf.take_map("PROTECTED_PROCS").context("PROTECTED_PROCS not found")?,
     )?;
+
+    // アンチチートの LSM プログラム ID を収集
+    let our_prog_ids: Vec<u32> = ["ptrace_access_check", "bpf_hook"]
+        .iter()
+        .filter_map(|name| {
+            bpf.program(name)
+                .and_then(|p| p.info().ok())
+                .map(|info| info.id())
+        })
+        .collect();
+
+    // loaded_links() でカーネル上の全リンクを走査し、自分のプログラムに紐づくものを保護
+    let mut protected_links: HashMap<MapData, u32, u8> = HashMap::try_from(
+        bpf.take_map("PROTECTED_LINKS").context("PROTECTED_LINKS not found")?,
+    )?;
+    for link_info in loaded_links().flatten() {
+        if our_prog_ids.contains(&link_info.program_id()) {
+            let link_id = link_info.id();
+            protected_links.insert(link_id, 1u8, 0)?;
+            info!("link id={} protected", link_id);
+        }
+    }
 
     let daemon_pid = std::process::id();
     protected.insert(daemon_pid, 1u8, 0)?;
