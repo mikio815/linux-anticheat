@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# ptrace_access_check フック 1 個が ptrace / process_vm_writev / /proc/pid/mem の
-# 3 ベクトルを全て遮断することを Lima 上で実証する。
-# 保護対象 (daemon が起動した victim) と非保護 (control sleeper) を比較する。
+# Demonstrate on Lima that a single ptrace_access_check hook blocks all three vectors:
+# ptrace / process_vm_writev / /proc/pid/mem.
+# Compares a protected target (victim launched by the daemon) against an unprotected control sleeper.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -23,7 +23,7 @@ gcc -O0 -o "$HERE/attacker" "$HERE/attacker.c" || exit 1
 [ -x "$DAEMON" ] || { echo "daemon not built: $DAEMON"; exit 1; }
 
 echo "=== start daemon (launches protected victim) ==="
-# pidfile は root 所有なので sudo で消す。前回の残留 daemon も掃除する
+# The pidfile is root-owned, so remove it with sudo. Also clean up any leftover daemon
 sudo pkill -f target/debug/anticheat 2>/dev/null
 sudo rm -f "$PIDFILE"
 sudo "$DAEMON" "$HERE/victim" "$PIDFILE" >"$DLOG" 2>&1 &

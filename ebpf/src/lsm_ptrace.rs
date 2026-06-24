@@ -17,8 +17,8 @@ pub fn ptrace_access_check(ctx: LsmContext) -> i32 {
 }
 
 unsafe fn try_ptrace_access_check(ctx: LsmContext) -> Result<i32, i64> {
-    // Safety: child は LSM フックが渡す有効な task_struct (PTR_TO_BTF_ID)。
-    // フィールド read は verifier が probe read に変換する
+    // Safety: child is a valid task_struct passed by the LSM hook (PTR_TO_BTF_ID).
+    // The verifier rewrites field reads into probe reads.
     let child: *const task_struct = ctx.arg(0);
     let target_tgid = (*child).tgid as u32;
 
@@ -28,21 +28,21 @@ unsafe fn try_ptrace_access_check(ctx: LsmContext) -> Result<i32, i64> {
         start_time: (*child).start_time,
     };
 
-    // PROTECTED_PROCS は (tgid+start_time) で PID 再利用に強い。
-    // PROTECTED_TGIDS は daemon 自身の coarse 保護 (tgid 単体)。
+    // PROTECTED_PROCS keys on (tgid+start_time), robust against PID reuse.
+    // PROTECTED_TGIDS is the daemon's own coarse protection (tgid only).
     if PROTECTED_PROCS.get(&key).is_none() && PROTECTED_TGIDS.get(&target_tgid).is_none() {
         return Ok(0);
     }
 
     let caller_tgid = (bpf_get_current_pid_tgid() >> 32) as u32;
 
-    // 監視役 (daemon) は保護対象への正規アクセス (maps/mem スキャン) を許可
+    // Allow the monitor (daemon) its legitimate access to targets (maps/mem scans)
     if MONITOR_TGIDS.get(&caller_tgid).is_some() {
         return Ok(0);
     }
 
     if let Some(mut entry) = EVENTS.reserve::<PtraceEvent>(0) {
-        // Safety: reserve した領域に書き込む
+        // Safety: writing into the reserved region
         (*entry.as_mut_ptr()).caller_pid = caller_tgid;
         (*entry.as_mut_ptr()).target_pid = target_tgid;
         entry.submit(0);

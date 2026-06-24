@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# 保護対象ゲームの /proc/<pid>/maps を root が読めるか確認する。
-# 我々の ptrace_access_check フックが maps 読み取りまで弾くと
-# daemon 自身の maps スキャンが成立しなくなるため、その挙動を実測する。
+# Check whether root can read a protected game's /proc/<pid>/maps.
+# If our ptrace_access_check hook also blocks maps reads, the daemon's own
+# maps scan would break, so measure that behavior.
 export PATH="$PATH:/usr/sbin"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DAEMON="$HERE/../../target/debug/anticheat"
@@ -18,15 +18,15 @@ VICTIM="$(cat "$PIDFILE" 2>/dev/null)"
 echo "protected victim pid=$VICTIM"
 
 echo
-echo "=== root が保護対象の /proc/$VICTIM/maps を読めるか ==="
+echo "=== can root read the protected target's /proc/$VICTIM/maps ==="
 if sudo head -n 3 "/proc/$VICTIM/maps" 2>/tmp/maps_err; then
-    echo "RESULT: READABLE (maps スキャン可能)"
+    echo "RESULT: READABLE (maps scan possible)"
 else
-    echo "RESULT: BLOCKED ($(cat /tmp/maps_err)) → caller 免除が必要"
+    echo "RESULT: BLOCKED ($(cat /tmp/maps_err)) -> caller exemption needed"
 fi
 
 echo
-echo "=== 比較: 非保護プロセス (自分) の maps ==="
+echo "=== compare: maps of an unprotected process (self) ==="
 sudo head -n 1 /proc/self/maps >/dev/null 2>&1 && echo "self maps: READABLE"
 
 sudo pkill -f target/debug/anticheat 2>/dev/null

@@ -7,7 +7,7 @@ pub fn load(obj_bytes: &'static [u8]) -> Result<Ebpf> {
 
     let mut bpf = Ebpf::load(obj_bytes)?;
 
-    // (eBPF 関数名, LSM フック名 = BTF 型名)
+    // (eBPF function name, LSM hook name = BTF type name)
     for (prog_name, hook_name) in &[
         ("ptrace_access_check", "ptrace_access_check"),
         ("bpf_hook", "bpf"),

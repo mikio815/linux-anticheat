@@ -1,6 +1,6 @@
-// 指定 PID に対して 3 ベクトルでメモリアクセスを試み、
-// 権限チェックで弾かれた (EPERM/EACCES) か通った (それ以外) かを分類する。
-// root で実行することで DAC を素通りさせ、LSM フックの効果だけを観測する。
+// Tries to access a given PID's memory via three vectors and classifies whether
+// the permission check blocked it (EPERM/EACCES) or let it through (anything else).
+// Running as root bypasses DAC so we observe only the LSM hook's effect.
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -12,7 +12,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-// EPERM/EACCES を「ブロック」、それ以外 (成功/EFAULT/ESRCH 等) を「通過」とみなす
+// Treat EPERM/EACCES as "blocked" and anything else (success/EFAULT/ESRCH/etc.) as "passed"
 static const char *classify(int ok, int e) {
     if (ok) return "ALLOWED(success)";
     if (e == EPERM || e == EACCES) return "BLOCKED";

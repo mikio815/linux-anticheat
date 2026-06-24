@@ -37,21 +37,21 @@ async fn main() -> Result<()> {
 
     let mut bpf = loader::load(OBJ)?;
 
-    // ゲーム保護は eBPF が exec 観測時に PROTECTED_PROCS へ自動登録する。
-    // daemon は WATCH_TGIDS に自分の tgid を書いてトリガするだけ。
+    // Game protection: eBPF auto-registers into PROTECTED_PROCS when it observes exec.
+    // The daemon only writes its own tgid into WATCH_TGIDS to trigger it.
     let mut watch_tgids: HashMap<MapData, u32, u8> = HashMap::try_from(
         bpf.take_map("WATCH_TGIDS").context("WATCH_TGIDS not found")?,
     )?;
-    // daemon 自身の coarse 保護 (tgid 単体)
+    // Coarse protection for the daemon itself (tgid only)
     let mut protected_tgids: HashMap<MapData, u32, u8> = HashMap::try_from(
         bpf.take_map("PROTECTED_TGIDS").context("PROTECTED_TGIDS not found")?,
     )?;
-    // 監視役免除: daemon は保護対象の maps/mem を読めるようにする
+    // Monitor exemption: let the daemon read protected targets' maps/mem
     let mut monitor_tgids: HashMap<MapData, u32, u8> = HashMap::try_from(
         bpf.take_map("MONITOR_TGIDS").context("MONITOR_TGIDS not found")?,
     )?;
 
-    // アンチチートの全プログラム ID を収集
+    // Collect all of the anti-cheat's program IDs
     let our_prog_ids: Vec<u32> = ["ptrace_access_check", "bpf_hook", "sched_process_exec"]
         .iter()
         .filter_map(|name| {
@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
         })
         .collect();
 
-    // loaded_links() でカーネル上の全リンクを走査し、自分のプログラムに紐づくものを保護
+    // Walk all kernel links via loaded_links() and protect those bound to our programs
     let mut protected_links: HashMap<MapData, u32, u8> = HashMap::try_from(
         bpf.take_map("PROTECTED_LINKS").context("PROTECTED_LINKS not found")?,
     )?;
@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // 自分の prog ID を FD ガード対象に登録 (BPF_PROG_GET_FD_BY_ID 拒否)
+    // Register our prog IDs as FD-guard targets (deny BPF_PROG_GET_FD_BY_ID)
     let mut protected_progs: HashMap<MapData, u32, u8> = HashMap::try_from(
         bpf.take_map("PROTECTED_PROGS").context("PROTECTED_PROGS not found")?,
     )?;
@@ -82,8 +82,8 @@ async fn main() -> Result<()> {
         info!("prog id={} protected", id);
     }
 
-    // 自分の map ID を FD ガード対象に登録 (BPF_MAP_GET_FD_BY_ID 拒否)。
-    // これにより攻撃者は PROTECTED_PROCS 等の map FD を ID から入手できず改ざんできない。
+    // Register our map IDs as FD-guard targets (deny BPF_MAP_GET_FD_BY_ID).
+    // This stops an attacker from getting an FD for maps like PROTECTED_PROCS by ID and tampering.
     const OUR_MAPS: &[&str] = &[
         "EVENTS",
         "PROTECTED_PROCS",
@@ -105,27 +105,27 @@ async fn main() -> Result<()> {
         }
     }
 
-    // spawn より前に書く: ゲームは daemon の子なので exec 時に親 tgid が
-    // WATCH_TGIDS にあれば eBPF が登録する (登録の取りこぼし窓を無くす)
+    // Write before spawn: the game is the daemon's child, so on exec eBPF registers it
+    // if the parent tgid is in WATCH_TGIDS (eliminates the registration race window)
     let daemon_tgid = std::process::id();
     watch_tgids.insert(daemon_tgid, 1u8, 0)?;
     protected_tgids.insert(daemon_tgid, 1u8, 0)?;
     monitor_tgids.insert(daemon_tgid, 1u8, 0)?;
     info!("daemon tgid={} watched", daemon_tgid);
 
-    // getenv はフック可能なので /proc/self/environ を直接読む
+    // getenv can be hooked, so read /proc/self/environ directly
     let environ = std::fs::read("/proc/self/environ").context("failed to read /proc/self/environ")?;
     if environ.split(|&b| b == 0).any(|var| var.starts_with(b"LD_PRELOAD=")) {
         anyhow::bail!("LD_PRELOAD is set");
     }
 
-    // Safety: pre_exec は fork 後 exec 前に子プロセスのみで実行される
+    // Safety: pre_exec runs only in the child, after fork and before exec
     let mut child = unsafe {
         Command::new(game_binary)
             .args(game_args)
-            .env_remove("LD_PRELOAD") // exec に渡す env を直接操作（unsetenv フック回避）
+            .env_remove("LD_PRELOAD") // manipulate the exec env directly (avoids the unsetenv hook)
             .pre_exec(|| {
-                // 親 (daemon) が死んだら子 (game) も SIGKILL で落とす
+                // If the parent (daemon) dies, take the child (game) down with SIGKILL
                 libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0);
                 Ok(())
             })
@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
     };
 
     let game_pid = child.id().context("failed to get game pid")? as u32;
-    // PROTECTED_PROCS への登録は eBPF が exec 観測時に行う (start_time 付き)
+    // eBPF registers into PROTECTED_PROCS when it observes exec (with start_time)
     info!("game pid={} spawned", game_pid);
 
     let ring_buf: RingBuf<MapData> = RingBuf::try_from(
@@ -142,7 +142,7 @@ async fn main() -> Result<()> {
     )?;
     let mut async_fd = AsyncFd::new(ring_buf)?;
 
-    // 注入検出スキャナ。最初の scan() でベースラインを記録し、以降は差分を見る
+    // Injection-detection scanner. The first scan() records the baseline; later ones diff against it
     let mut scanner = MapsScanner::new(game_pid, game_binary);
     scanner.scan();
     let mut scan_tick =
@@ -158,8 +158,8 @@ async fn main() -> Result<()> {
                 scanner.scan();
             }
             status = child.wait() => {
-                // PROTECTED_PROCS の stale エントリは (tgid+start_time) キーなので
-                // PID 再利用されても誤ヒットせず、明示削除は不要
+                // Stale PROTECTED_PROCS entries key on (tgid+start_time), so PID reuse
+                // never false-hits and no explicit removal is needed
                 info!("game exited: {:?}", status);
                 break;
             }
@@ -169,7 +169,7 @@ async fn main() -> Result<()> {
                 while let Some(item) = rb.next() {
                     let item: &[u8] = &item;
                     if item.len() >= core::mem::size_of::<PtraceEvent>() {
-                        // Safety: eBPF 側で PtraceEvent として書き込んでいる
+                        // Safety: the eBPF side wrote this as a PtraceEvent
                         let ev = unsafe { &*(item.as_ptr() as *const PtraceEvent) };
                         info!(
                             "ptrace blocked: caller_pid={} -> target_pid={}",

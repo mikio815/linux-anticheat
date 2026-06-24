@@ -8,8 +8,8 @@ use anticheat_common::ProcessKey;
 use crate::vmlinux::task_struct;
 use crate::{PROTECTED_PROCS, WATCH_TGIDS};
 
-// exec を観測し、親が監視対象なら自分を保護登録 + 自分も監視対象に伝播。
-// これによりゲームの fork-exec 子孫プロセス木全体を追従する。
+// On exec, if the parent is watched, register self as protected and propagate watch to self.
+// This tracks the game's whole fork-exec descendant process tree.
 #[tracepoint]
 pub fn sched_process_exec(_ctx: TracePointContext) -> u32 {
     unsafe { try_exec() };
@@ -17,8 +17,8 @@ pub fn sched_process_exec(_ctx: TracePointContext) -> u32 {
 }
 
 unsafe fn try_exec() {
-    // Safety: bpf_get_current_task_btf() は PTR_TO_BTF_ID を返すため
-    // フィールド read は verifier が probe read に変換する (LSM 引数と同じ)。
+    // Safety: bpf_get_current_task_btf() returns PTR_TO_BTF_ID, so the verifier
+    // rewrites field reads into probe reads (same as LSM arguments).
     let task = bpf_get_current_task_btf() as *const task_struct;
     if task.is_null() {
         return;

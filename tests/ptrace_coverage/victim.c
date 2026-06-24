@@ -1,4 +1,4 @@
-// 保護対象プロセス役。PID を pidfile に書いて待機するだけ。
+// Plays the protected process. Just writes its PID to the pidfile and waits.
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>

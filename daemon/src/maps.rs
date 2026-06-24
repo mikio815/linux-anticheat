@@ -2,9 +2,9 @@ use std::collections::HashSet;
 
 use log::{info, warn};
 
-// 注入検出: ゲームの /proc/<pid>/maps を読み、実行可能マッピングを
-// パスホワイトリスト + 起動時ベースライン差分の両方で評価する (両方併用)。
-// 検出は report のみ。ban 判断はサーバー側 (脅威モデルの原則)。
+// Injection detection: read the game's /proc/<pid>/maps and evaluate executable mappings
+// against both a path whitelist and a startup-baseline diff.
+// Detection only reports; the ban decision is on the server (threat-model principle).
 pub struct MapsScanner {
     pid: u32,
     allow_prefixes: Vec<String>,
@@ -13,7 +13,7 @@ pub struct MapsScanner {
     initialized: bool,
 }
 
-// system のライブラリ標準パス。ゲームバイナリの dir は起動時に追加する。
+// Standard system library paths. The game binary's dir is added at startup.
 const SYSTEM_LIB_PREFIXES: &[&str] = &[
     "/usr/lib",
     "/lib",
@@ -25,7 +25,7 @@ impl MapsScanner {
     pub fn new(pid: u32, game_binary: &str) -> Self {
         let mut allow_prefixes: Vec<String> =
             SYSTEM_LIB_PREFIXES.iter().map(|s| s.to_string()).collect();
-        // ゲームバイナリと同じディレクトリ配下を許可
+        // Allow anything under the game binary's own directory
         if let Ok(canon) = std::fs::canonicalize(game_binary) {
             if let Some(dir) = canon.parent() {
                 allow_prefixes.push(dir.to_string_lossy().into_owned());
@@ -40,14 +40,14 @@ impl MapsScanner {
         }
     }
 
-    // exec マッピングのパスがホワイトリスト配下か
+    // Whether an exec mapping's path is under the whitelist
     fn is_allowed_path(&self, path: &str) -> bool {
         self.allow_prefixes.iter().any(|p| path.starts_with(p.as_str()))
     }
 
-    // 1 行を評価し、注入の疑いがあれば理由を返す
+    // Evaluate one line; return a reason if it looks like injection
     fn classify(&self, path: &str) -> Option<&'static str> {
-        // 匿名 / 特殊領域の実行マップ = reflective injection / コード生成の痕跡
+        // Anonymous / special-region exec maps = traces of reflective injection / code generation
         if path.is_empty() {
             return Some("anonymous executable mapping");
         }
@@ -58,10 +58,10 @@ impl MapsScanner {
             return Some("memfd/shm executable mapping");
         }
         if path.starts_with('[') {
-            // [vdso] [vsyscall] 等はカーネル提供で正常
+            // [vdso], [vsyscall], etc. are kernel-provided and normal
             return None;
         }
-        // file-backed: ホワイトリスト外は不審な .so
+        // file-backed: anything outside the whitelist is a suspicious .so
         if !self.is_allowed_path(path) {
             return Some("unexpected file-backed executable mapping");
         }
@@ -71,7 +71,7 @@ impl MapsScanner {
     pub fn scan(&mut self) {
         let content = match std::fs::read_to_string(format!("/proc/{}/maps", self.pid)) {
             Ok(c) => c,
-            // プロセス終了 / 一時的な読み取り不可は無視
+            // Ignore process exit / transient read failures
             Err(_) => return,
         };
 
@@ -81,24 +81,24 @@ impl MapsScanner {
             let addr = head.next().unwrap_or("");
             let perms = head.next().unwrap_or("");
             if perms.as_bytes().get(2) != Some(&b'x') {
-                continue; // 実行可能マップのみ対象
+                continue; // executable maps only
             }
-            // pathname は 6 フィールド目以降。" (deleted)" の空白を保つため join で再構成
+            // pathname is field 6 onward. Rejoin to preserve the space in " (deleted)"
             let path = line.split_whitespace().skip(5).collect::<Vec<_>>().join(" ");
             let path = path.as_str();
 
-            // 起動時スキャンはベースラインとして記録するだけ
+            // The startup scan only records the baseline
             if !self.initialized {
                 self.baseline.insert(path.to_string());
                 continue;
             }
 
             if let Some(reason) = self.classify(path) {
-                // ベースラインに在ったものは正常 (遅延ロード等) として許容
+                // Anything already in the baseline is treated as normal (lazy loading, etc.)
                 if self.baseline.contains(path) && !path.is_empty() {
                     continue;
                 }
-                // 同一マップの重複報告を抑制 (addr+path をキー)
+                // Suppress duplicate reports of the same map (keyed by addr+path)
                 let key = format!("{addr} {path}");
                 if self.reported.insert(key) {
                     warn!(
