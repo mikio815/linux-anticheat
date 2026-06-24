@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use aya::maps::{HashMap, MapData, RingBuf};
+use aya::maps::{loaded_maps, HashMap, MapData, RingBuf};
 use aya::programs::loaded_links;
 use log::info;
 use tokio::io::unix::{AsyncFd, AsyncFdReadyMutGuard};
@@ -8,6 +8,10 @@ use tokio::signal;
 use anticheat_common::PtraceEvent;
 
 mod loader;
+mod maps;
+use maps::MapsScanner;
+
+const MAPS_SCAN_INTERVAL_SECS: u64 = 5;
 
 static OBJ: &[u8] = aya::include_bytes_aligned!(
     "../../ebpf/target/bpfel-unknown-none/release/anticheat-ebpf"
@@ -33,12 +37,22 @@ async fn main() -> Result<()> {
 
     let mut bpf = loader::load(OBJ)?;
 
-    let mut protected: HashMap<MapData, u32, u8> = HashMap::try_from(
-        bpf.take_map("PROTECTED_PROCS").context("PROTECTED_PROCS not found")?,
+    // ゲーム保護は eBPF が exec 観測時に PROTECTED_PROCS へ自動登録する。
+    // daemon は WATCH_TGIDS に自分の tgid を書いてトリガするだけ。
+    let mut watch_tgids: HashMap<MapData, u32, u8> = HashMap::try_from(
+        bpf.take_map("WATCH_TGIDS").context("WATCH_TGIDS not found")?,
+    )?;
+    // daemon 自身の coarse 保護 (tgid 単体)
+    let mut protected_tgids: HashMap<MapData, u32, u8> = HashMap::try_from(
+        bpf.take_map("PROTECTED_TGIDS").context("PROTECTED_TGIDS not found")?,
+    )?;
+    // 監視役免除: daemon は保護対象の maps/mem を読めるようにする
+    let mut monitor_tgids: HashMap<MapData, u32, u8> = HashMap::try_from(
+        bpf.take_map("MONITOR_TGIDS").context("MONITOR_TGIDS not found")?,
     )?;
 
-    // アンチチートの LSM プログラム ID を収集
-    let our_prog_ids: Vec<u32> = ["ptrace_access_check", "bpf_hook"]
+    // アンチチートの全プログラム ID を収集
+    let our_prog_ids: Vec<u32> = ["ptrace_access_check", "bpf_hook", "sched_process_exec"]
         .iter()
         .filter_map(|name| {
             bpf.program(name)
@@ -59,9 +73,45 @@ async fn main() -> Result<()> {
         }
     }
 
-    let daemon_pid = std::process::id();
-    protected.insert(daemon_pid, 1u8, 0)?;
-    info!("daemon pid={} registered", daemon_pid);
+    // 自分の prog ID を FD ガード対象に登録 (BPF_PROG_GET_FD_BY_ID 拒否)
+    let mut protected_progs: HashMap<MapData, u32, u8> = HashMap::try_from(
+        bpf.take_map("PROTECTED_PROGS").context("PROTECTED_PROGS not found")?,
+    )?;
+    for id in &our_prog_ids {
+        protected_progs.insert(*id, 1u8, 0)?;
+        info!("prog id={} protected", id);
+    }
+
+    // 自分の map ID を FD ガード対象に登録 (BPF_MAP_GET_FD_BY_ID 拒否)。
+    // これにより攻撃者は PROTECTED_PROCS 等の map FD を ID から入手できず改ざんできない。
+    const OUR_MAPS: &[&str] = &[
+        "EVENTS",
+        "PROTECTED_PROCS",
+        "PROTECTED_TGIDS",
+        "MONITOR_TGIDS",
+        "WATCH_TGIDS",
+        "PROTECTED_LINKS",
+        "PROTECTED_PROGS",
+        "PROTECTED_MAPS",
+    ];
+    let mut protected_maps: HashMap<MapData, u32, u8> = HashMap::try_from(
+        bpf.take_map("PROTECTED_MAPS").context("PROTECTED_MAPS not found")?,
+    )?;
+    for map_info in loaded_maps().flatten() {
+        if map_info.name_as_str().is_some_and(|n| OUR_MAPS.contains(&n)) {
+            let id = map_info.id();
+            protected_maps.insert(id, 1u8, 0)?;
+            info!("map id={} protected", id);
+        }
+    }
+
+    // spawn より前に書く: ゲームは daemon の子なので exec 時に親 tgid が
+    // WATCH_TGIDS にあれば eBPF が登録する (登録の取りこぼし窓を無くす)
+    let daemon_tgid = std::process::id();
+    watch_tgids.insert(daemon_tgid, 1u8, 0)?;
+    protected_tgids.insert(daemon_tgid, 1u8, 0)?;
+    monitor_tgids.insert(daemon_tgid, 1u8, 0)?;
+    info!("daemon tgid={} watched", daemon_tgid);
 
     // getenv はフック可能なので /proc/self/environ を直接読む
     let environ = std::fs::read("/proc/self/environ").context("failed to read /proc/self/environ")?;
@@ -84,13 +134,19 @@ async fn main() -> Result<()> {
     };
 
     let game_pid = child.id().context("failed to get game pid")? as u32;
-    protected.insert(game_pid, 1u8, 0)?;
-    info!("game pid={} registered", game_pid);
+    // PROTECTED_PROCS への登録は eBPF が exec 観測時に行う (start_time 付き)
+    info!("game pid={} spawned", game_pid);
 
     let ring_buf: RingBuf<MapData> = RingBuf::try_from(
         bpf.take_map("EVENTS").context("EVENTS not found")?,
     )?;
     let mut async_fd = AsyncFd::new(ring_buf)?;
+
+    // 注入検出スキャナ。最初の scan() でベースラインを記録し、以降は差分を見る
+    let mut scanner = MapsScanner::new(game_pid, game_binary);
+    scanner.scan();
+    let mut scan_tick =
+        tokio::time::interval(std::time::Duration::from_secs(MAPS_SCAN_INTERVAL_SECS));
 
     loop {
         tokio::select! {
@@ -98,9 +154,13 @@ async fn main() -> Result<()> {
                 let _ = child.kill().await;
                 break;
             }
+            _ = scan_tick.tick() => {
+                scanner.scan();
+            }
             status = child.wait() => {
+                // PROTECTED_PROCS の stale エントリは (tgid+start_time) キーなので
+                // PID 再利用されても誤ヒットせず、明示削除は不要
                 info!("game exited: {:?}", status);
-                let _ = protected.remove(&game_pid);
                 break;
             }
             result = async_fd.readable_mut() => {
