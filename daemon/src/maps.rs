@@ -42,7 +42,12 @@ impl MapsScanner {
 
     // Whether an exec mapping's path is under the whitelist
     fn is_allowed_path(&self, path: &str) -> bool {
-        self.allow_prefixes.iter().any(|p| path.starts_with(p.as_str()))
+        self.allow_prefixes.iter().any(|p| {
+            path == p
+                || path
+                    .strip_prefix(p.as_str())
+                    .is_some_and(|s| s.starts_with('/'))
+        })
     }
 
     // Evaluate one line; return a reason if it looks like injection

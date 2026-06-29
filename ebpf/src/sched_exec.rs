@@ -25,6 +25,11 @@ unsafe fn try_exec() {
     }
 
     let tgid = (*task).tgid as u32;
+    let leader = if (*task).group_leader.is_null() {
+        task
+    } else {
+        (*task).group_leader
+    };
     let parent = (*task).real_parent;
     if parent.is_null() {
         return;
@@ -38,7 +43,7 @@ unsafe fn try_exec() {
     let key = ProcessKey {
         pid: tgid,
         _pad: 0,
-        start_time: (*task).start_time,
+        start_time: (*leader).start_time,
     };
     let _ = PROTECTED_PROCS.insert(&key, &1u8, 0);
     let _ = WATCH_TGIDS.insert(&tgid, &1u8, 0);

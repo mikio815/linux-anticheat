@@ -17,15 +17,25 @@ pub fn ptrace_access_check(ctx: LsmContext) -> i32 {
 }
 
 unsafe fn try_ptrace_access_check(ctx: LsmContext) -> Result<i32, i64> {
+    let retval: i32 = ctx.arg(2);
+    if retval != 0 {
+        return Ok(retval);
+    }
+
     // Safety: child is a valid task_struct passed by the LSM hook (PTR_TO_BTF_ID).
     // The verifier rewrites field reads into probe reads.
     let child: *const task_struct = ctx.arg(0);
     let target_tgid = (*child).tgid as u32;
+    let leader = if (*child).group_leader.is_null() {
+        child
+    } else {
+        (*child).group_leader
+    };
 
     let key = ProcessKey {
         pid: target_tgid,
         _pad: 0,
-        start_time: (*child).start_time,
+        start_time: (*leader).start_time,
     };
 
     // PROTECTED_PROCS keys on (tgid+start_time), robust against PID reuse.
