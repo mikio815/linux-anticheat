@@ -10,6 +10,7 @@ pub fn load(obj_bytes: &'static [u8]) -> Result<Ebpf> {
     // (eBPF function name, LSM hook name = BTF type name)
     for (prog_name, hook_name) in &[
         ("ptrace_access_check", "ptrace_access_check"),
+        ("ptrace_traceme", "ptrace_traceme"),
         ("bpf_hook", "bpf"),
     ] {
         let lsm: &mut Lsm = bpf

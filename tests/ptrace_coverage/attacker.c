@@ -1,4 +1,4 @@
-// Tries to access a given PID's memory via three vectors and classifies whether
+// Tries to access a given PID's memory via four vectors and classifies whether
 // the permission check blocked it (EPERM/EACCES) or let it through (anything else).
 // Running as root bypasses DAC so we observe only the LSM hook's effect.
 #define _GNU_SOURCE
@@ -63,6 +63,18 @@ static void test_pvw(pid_t pid) {
            classify(ok, e), ok ? 0 : e, ok ? "" : strerror(e));
 }
 
+static void test_pvr(pid_t pid) {
+    char local[8];
+    struct iovec liov = {local, sizeof local};
+    struct iovec riov = {(void *)0x1000, sizeof local};
+    errno = 0;
+    ssize_t n = process_vm_readv(pid, &liov, 1, &riov, 1, 0);
+    int e = errno;
+    int ok = (n >= 0);
+    printf("  process_vm_readv   : %-20s (errno=%d %s)\n",
+           classify(ok, e), ok ? 0 : e, ok ? "" : strerror(e));
+}
+
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "usage: %s <label> <pid>\n", argv[0]);
@@ -72,6 +84,7 @@ int main(int argc, char **argv) {
     printf("[%s] target pid=%d (attacker uid=%d)\n", argv[1], pid, getuid());
     test_ptrace(pid);
     test_procmem(pid);
+    test_pvr(pid);
     test_pvw(pid);
     return 0;
 }

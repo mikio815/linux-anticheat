@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Demonstrate on Lima that a single ptrace_access_check hook blocks all three vectors:
-# ptrace / process_vm_writev / /proc/pid/mem.
+# Demonstrate on Lima that a single ptrace_access_check hook blocks all four vectors:
+# ptrace / process_vm_readv / process_vm_writev / /proc/pid/mem.
 # Compares a protected target (victim launched by the daemon) against an unprotected control sleeper.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -40,10 +40,10 @@ CTRL_PID=$!
 echo "control pid=$CTRL_PID"
 
 echo
-echo "########## ATTACK protected victim (expect BLOCKED x3) ##########"
+echo "########## ATTACK protected victim (expect BLOCKED x4) ##########"
 sudo "$HERE/attacker" PROTECTED "$VICTIM_PID"
 echo
-echo "########## ATTACK control sleeper (expect ALLOWED x3) ##########"
+echo "########## ATTACK control sleeper (expect ALLOWED x4) ##########"
 sudo "$HERE/attacker" CONTROL "$CTRL_PID"
 
 echo

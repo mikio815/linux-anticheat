@@ -52,14 +52,19 @@ async fn main() -> Result<()> {
     )?;
 
     // Collect all of the anti-cheat's program IDs
-    let our_prog_ids: Vec<u32> = ["ptrace_access_check", "bpf_hook", "sched_process_exec"]
-        .iter()
-        .filter_map(|name| {
-            bpf.program(name)
-                .and_then(|p| p.info().ok())
-                .map(|info| info.id())
-        })
-        .collect();
+    let our_prog_ids: Vec<u32> = [
+        "ptrace_access_check",
+        "ptrace_traceme",
+        "bpf_hook",
+        "sched_process_exec",
+    ]
+    .iter()
+    .filter_map(|name| {
+        bpf.program(name)
+            .and_then(|p| p.info().ok())
+            .map(|info| info.id())
+    })
+    .collect();
 
     // Walk all kernel links via loaded_links() and protect those bound to our programs
     let mut protected_links: HashMap<MapData, u32, u8> = HashMap::try_from(
