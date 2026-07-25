@@ -125,13 +125,30 @@ async fn main() -> Result<()> {
         anyhow::bail!("LD_PRELOAD is set");
     }
 
+    // The game must not be root: drop to the invoking user (real deployments run
+    // the game as a normal user while only the daemon/eBPF side is privileged)
+    let game_ids: Option<(u32, u32)> = std::env::var("SUDO_UID")
+        .ok()
+        .and_then(|u| u.parse().ok())
+        .zip(std::env::var("SUDO_GID").ok().and_then(|g| g.parse().ok()));
+
     // Safety: pre_exec runs only in the child, after fork and before exec
     let mut child = unsafe {
         Command::new(game_binary)
             .args(game_args)
             .env_remove("LD_PRELOAD") // manipulate the exec env directly (avoids the unsetenv hook)
-            .pre_exec(|| {
-                // If the parent (daemon) dies, take the child (game) down with SIGKILL
+            .pre_exec(move || {
+                if let Some((uid, gid)) = game_ids {
+                    if libc::setgroups(1, &gid) != 0
+                        || libc::setgid(gid) != 0
+                        || libc::setuid(uid) != 0
+                    {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                // setuid clears dumpable and pdeathsig, so set both AFTER the drop:
+                // a normal game is dumpable, and if the daemon dies the game must follow
+                libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0);
                 libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0);
                 Ok(())
             })
