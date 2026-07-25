@@ -55,6 +55,7 @@ async fn main() -> Result<()> {
     let our_prog_ids: Vec<u32> = [
         "ptrace_access_check",
         "ptrace_traceme",
+        "file_mprotect",
         "bpf_hook",
         "sched_process_exec",
     ]

@@ -11,6 +11,7 @@ use anticheat_common::ProcessKey;
 mod vmlinux;
 
 mod lsm_bpf;
+mod lsm_mmap;
 mod lsm_ptrace;
 mod sched_exec;
 
