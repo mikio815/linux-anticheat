@@ -13,3 +13,7 @@ ebpf/target/
 
 # OS
 .DS_Store
+
+# Built test binaries (rebuilt by the test scripts)
+tests/ptrace_coverage/attacker
+tests/ptrace_coverage/victim
