@@ -1,0 +1,175 @@
+[1;32m██╗     ██╗███╗   ██╗██╗   ██╗██╗  ██╗     █████╗ ███╗   ██╗████████╗██╗       ██████╗██╗  ██╗███████╗ █████╗ ████████╗
+██║     ██║████╗  ██║██║   ██║╚██╗██╔╝    ██╔══██╗████╗  ██║╚══██╔══╝██║      ██╔════╝██║  ██║██╔════╝██╔══██╗╚══██╔══╝
+██║     ██║██╔██╗ ██║██║   ██║ ╚███╔╝     ███████║██╔██╗ ██║   ██║   ██║█████╗██║     ███████║█████╗  ███████║   ██║
+██║     ██║██║╚██╗██║██║   ██║ ██╔██╗     ██╔══██║██║╚██╗██║   ██║   ██║╚════╝██║     ██╔══██║██╔══╝  ██╔══██║   ██║
+███████╗██║██║ ╚████║╚██████╔╝██╔╝ ██╗    ██║  ██║██║ ╚████║   ██║   ██║      ╚██████╗██║  ██║███████╗██║  ██║   ██║
+╚══════╝╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝    ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝   ╚═╝       ╚═════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝   ╚═╝
+[0m
+[1m  kernel-level anti-cheat: LSM BPF live demo[0m
+
+================================================================
+  ENVIRONMENT
+================================================================
+
+Linux lima-ebpf-lima 6.8.0-124-generic #124-Ubuntu SMP PREEMPT_DYNAMIC Tue May 26 12:38:50 UTC 2026 aarch64 aarch64 aarch64 GNU/Linux
+active LSMs: lockdown,capability,landlock,yama,apparmor,bpf
+
+================================================================
+  SCENARIO 1/5: block cheat memory access
+================================================================
+
+game process (protected) vs sleeper (unprotected):
+ptrace / /proc/pid/mem / process_vm_readv / process_vm_writev
+=== build test binaries ===
+=== starting anti-cheat daemon (live) ===
+[2026-07-25T05:06:23Z INFO  anticheat] link id=163 protected
+[2026-07-25T05:06:23Z INFO  anticheat] link id=164 protected
+[2026-07-25T05:06:23Z INFO  anticheat] link id=165 protected
+[2026-07-25T05:06:23Z INFO  anticheat] link id=166 protected
+[2026-07-25T05:06:23Z INFO  anticheat] link id=167 protected
+[2026-07-25T05:06:23Z INFO  anticheat] prog id=365 protected
+[2026-07-25T05:06:23Z INFO  anticheat] prog id=366 protected
+[2026-07-25T05:06:23Z INFO  anticheat] prog id=367 protected
+[2026-07-25T05:06:23Z INFO  anticheat] prog id=368 protected
+[2026-07-25T05:06:23Z INFO  anticheat] prog id=369 protected
+[2026-07-25T05:06:23Z INFO  anticheat] map id=393 protected
+[2026-07-25T05:06:23Z INFO  anticheat] map id=394 protected
+[2026-07-25T05:06:23Z INFO  anticheat] map id=395 protected
+[2026-07-25T05:06:23Z INFO  anticheat] map id=396 protected
+[2026-07-25T05:06:23Z INFO  anticheat] map id=397 protected
+[2026-07-25T05:06:23Z INFO  anticheat] map id=398 protected
+[2026-07-25T05:06:23Z INFO  anticheat] map id=400 protected
+[2026-07-25T05:06:23Z INFO  anticheat] map id=401 protected
+[2026-07-25T05:06:23Z INFO  anticheat] daemon tgid=5305 watched
+[2026-07-25T05:06:23Z INFO  anticheat] game pid=5316 spawned
+[1;36m
+ █████╗ ██████╗ ███╗   ███╗███████╗██████╗
+██╔══██╗██╔══██╗████╗ ████║██╔════╝██╔══██╗
+███████║██████╔╝██╔████╔██║█████╗  ██║  ██║
+██╔══██║██╔══██╗██║╚██╔╝██║██╔══╝  ██║  ██║
+██║  ██║██║  ██║██║ ╚═╝ ██║███████╗██████╔╝
+╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚═════╝
+[0m
+victim pid=5316
+[1;36m  anti-cheat active: 5 programs / game pid=5316[0m
+[2026-07-25T05:06:23Z INFO  anticheat::maps] maps baseline recorded: 4 exec mappings, 5 allow-prefixes
+
+[1m>>> attacking the PROTECTED game (pid=5316) <<<[0m
+[PROTECTED] target pid=5316 (attacker uid=0)
+  PTRACE_ATTACH      : [1;31mBLOCKED             [0m (errno=1 Operation not permitted)
+[2026-07-25T05:06:26Z INFO  anticheat] ptrace blocked: caller_pid=5324 -> target_pid=5316
+[1;31m
+██████╗ ██╗      ██████╗  ██████╗██╗  ██╗███████╗██████╗
+██╔══██╗██║     ██╔═══██╗██╔════╝██║ ██╔╝██╔════╝██╔══██╗
+██████╔╝██║     ██║   ██║██║     █████╔╝ █████╗  ██║  ██║
+██╔══██╗██║     ██║   ██║██║     ██╔═██╗ ██╔══╝  ██║  ██║
+██████╔╝███████╗╚██████╔╝╚██████╗██║  ██╗███████╗██████╔╝
+╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝╚═════╝
+[0m
+[1;31m  attack blocked: pid=5324 -> protected pid=5316[0m
+  /proc/pid/mem      : [1;31mBLOCKED             [0m (errno=13 Permission denied)
+[2026-07-25T05:06:26Z INFO  anticheat] ptrace blocked: caller_pid=5324 -> target_pid=5316
+[1;31m
+██████╗ ██╗      ██████╗  ██████╗██╗  ██╗███████╗██████╗
+██╔══██╗██║     ██╔═══██╗██╔════╝██║ ██╔╝██╔════╝██╔══██╗
+██████╔╝██║     ██║   ██║██║     █████╔╝ █████╗  ██║  ██║
+██╔══██╗██║     ██║   ██║██║     ██╔═██╗ ██╔══╝  ██║  ██║
+██████╔╝███████╗╚██████╔╝╚██████╗██║  ██╗███████╗██████╔╝
+╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝╚═════╝
+[0m
+[1;31m  attack blocked: pid=5324 -> protected pid=5316[0m
+  process_vm_readv   : [1;31mBLOCKED             [0m (errno=1 Operation not permitted)
+[2026-07-25T05:06:27Z INFO  anticheat] ptrace blocked: caller_pid=5324 -> target_pid=5316
+[1;31m
+██████╗ ██╗      ██████╗  ██████╗██╗  ██╗███████╗██████╗
+██╔══██╗██║     ██╔═══██╗██╔════╝██║ ██╔╝██╔════╝██╔══██╗
+██████╔╝██║     ██║   ██║██║     █████╔╝ █████╗  ██║  ██║
+██╔══██╗██║     ██║   ██║██║     ██╔═██╗ ██╔══╝  ██║  ██║
+██████╔╝███████╗╚██████╔╝╚██████╗██║  ██╗███████╗██████╔╝
+╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝╚═════╝
+[0m
+[1;31m  attack blocked: pid=5324 -> protected pid=5316[0m
+  process_vm_writev  : [1;31mBLOCKED             [0m (errno=1 Operation not permitted)
+[2026-07-25T05:06:28Z INFO  anticheat] ptrace blocked: caller_pid=5324 -> target_pid=5316
+[1;31m
+██████╗ ██╗      ██████╗  ██████╗██╗  ██╗███████╗██████╗
+██╔══██╗██║     ██╔═══██╗██╔════╝██║ ██╔╝██╔════╝██╔══██╗
+██████╔╝██║     ██║   ██║██║     █████╔╝ █████╗  ██║  ██║
+██╔══██╗██║     ██║   ██║██║     ██╔═██╗ ██╔══╝  ██║  ██║
+██████╔╝███████╗╚██████╔╝╚██████╗██║  ██╗███████╗██████╔╝
+╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝╚═════╝
+[0m
+[1;31m  attack blocked: pid=5324 -> protected pid=5316[0m
+
+[1m>>> same attacks against an UNPROTECTED process (pid=5319) <<<[0m
+[CONTROL] target pid=5319 (attacker uid=0)
+  PTRACE_ATTACH      : [1;32mALLOWED(success)    [0m (errno=0 )
+  /proc/pid/mem      : [1;32mALLOWED(passed-perm)[0m (errno=5 Input/output error)
+  process_vm_readv   : [1;32mALLOWED(passed-perm)[0m (errno=14 Bad address)
+  process_vm_writev  : [1;32mALLOWED(passed-perm)[0m (errno=14 Bad address)
+[?25h
+
+================================================================
+  SCENARIO 2/5: block PTRACE_TRACEME anti-debug
+================================================================
+
+=== build PTRACE_TRACEME victim ===
+=== start daemon (launches protected TRACEME victim) ===
+=== victim result ===
+TRACEME: BLOCKED
+=== daemon ring buffer log ===
+ptrace-blocked events: 1
+[2026-07-25T05:06:37Z INFO  anticheat] ptrace blocked: caller_pid=5356 -> target_pid=5367
+RESULT: COVERED
+
+
+================================================================
+  SCENARIO 3/5: W^X enforcement (deny mprotect WRITE+EXEC)
+================================================================
+
+=== build W^X probe ===
+=== unprotected control (expect RWX allowed, RX allowed) ===
+PASS control mprotect RX allowed
+PASS control mprotect RWX allowed
+RESULT: PASS
+=== protected target (expect RWX blocked, RX allowed) ===
+PASS protected mprotect RX allowed
+PASS protected mprotect RWX blocked errno=1 Operation not permitted
+RESULT: PASS
+
+
+================================================================
+  SCENARIO 4/5: self-defense of the eBPF programs (bpf() guard)
+================================================================
+
+=== build bpf guard probe ===
+=== start daemon ===
+protected prog id=395 map id=429 link id=178
+=== bpf guard probe ===
+PASS BPF_PROG_GET_FD          id=395 blocked errno=1 Operation not permitted
+PASS BPF_MAP_GET_FD           id=429 blocked errno=1 Operation not permitted
+PASS BPF_LINK_GET_FD          id=178 blocked errno=1 Operation not permitted
+PASS BPF_PROG_MISSING         missing id not permission-blocked errno=2 No such file or directory
+PASS BPF_MAP_MISSING          missing id not permission-blocked errno=2 No such file or directory
+PASS BPF_LINK_MISSING         missing id not permission-blocked errno=2 No such file or directory
+PASS BPF_PROG_LOAD LSM        blocked errno=1 Operation not permitted
+PASS BPF_PROG_LOAD non-LSM    not permission-blocked errno=7 Argument list too long
+
+
+================================================================
+  SCENARIO 5/5: injection detection (maps scanner)
+================================================================
+
+victim pid=5508
+=== wait for injection to occur (baseline 2s + inject + scan 5s) ===
+
+=== daemon log: baseline + INJECTION SUSPECT ===
+[2026-07-25T05:06:46Z INFO  anticheat::maps] maps baseline recorded: 4 exec mappings, 5 allow-prefixes
+[2026-07-25T05:06:51Z WARN  anticheat::maps] INJECTION SUSPECT pid=5508 reason='unexpected file-backed executable mapping' map='/tmp/evil.so'
+[2026-07-25T05:06:51Z WARN  anticheat::maps] INJECTION SUSPECT pid=5508 reason='anonymous executable mapping' map='<anon>'
+suspect count: 2
+
+================================================================
+  DEMO FINISHED
+================================================================
+

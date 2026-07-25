@@ -17,6 +17,25 @@ static OBJ: &[u8] = aya::include_bytes_aligned!(
     "../../ebpf/target/bpfel-unknown-none/release/anticheat-ebpf"
 );
 
+// Demo-only visuals (AC_DEMO_FX=1). No effect on detection logic.
+const FX_ARMED: &str = "\x1b[1;36m
+ █████╗ ██████╗ ███╗   ███╗███████╗██████╗
+██╔══██╗██╔══██╗████╗ ████║██╔════╝██╔══██╗
+███████║██████╔╝██╔████╔██║█████╗  ██║  ██║
+██╔══██║██╔══██╗██║╚██╔╝██║██╔══╝  ██║  ██║
+██║  ██║██║  ██║██║ ╚═╝ ██║███████╗██████╔╝
+╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚═════╝
+\x1b[0m";
+
+const FX_BLOCKED: &str = "\x1b[1;31m
+██████╗ ██╗      ██████╗  ██████╗██╗  ██╗███████╗██████╗
+██╔══██╗██║     ██╔═══██╗██╔════╝██║ ██╔╝██╔════╝██╔══██╗
+██████╔╝██║     ██║   ██║██║     █████╔╝ █████╗  ██║  ██║
+██╔══██╗██║     ██║   ██║██║     ██╔═██╗ ██╔══╝  ██║  ██║
+██████╔╝███████╗╚██████╔╝╚██████╗██║  ██╗███████╗██████╔╝
+╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝╚═════╝
+\x1b[0m";
+
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::Builder::from_env(
@@ -27,6 +46,8 @@ async fn main() -> Result<()> {
     if unsafe { libc::geteuid() } != 0 {
         anyhow::bail!("root required");
     }
+
+    let demo_fx = std::env::var_os("AC_DEMO_FX").is_some_and(|v| v == "1");
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
@@ -160,6 +181,15 @@ async fn main() -> Result<()> {
     // eBPF registers into PROTECTED_PROCS when it observes exec (with start_time)
     info!("game pid={} spawned", game_pid);
 
+    if demo_fx {
+        println!("{FX_ARMED}");
+        println!(
+            "\x1b[1;36m  anti-cheat active: {} programs / game pid={}\x1b[0m",
+            our_prog_ids.len(),
+            game_pid
+        );
+    }
+
     let ring_buf: RingBuf<MapData> = RingBuf::try_from(
         bpf.take_map("EVENTS").context("EVENTS not found")?,
     )?;
@@ -189,18 +219,33 @@ async fn main() -> Result<()> {
             result = async_fd.readable_mut() => {
                 let mut guard: AsyncFdReadyMutGuard<'_, RingBuf<MapData>> = result?;
                 let rb = guard.get_inner_mut();
+                let mut events: Vec<PtraceEvent> = Vec::new();
                 while let Some(item) = rb.next() {
                     let item: &[u8] = &item;
                     if item.len() >= core::mem::size_of::<PtraceEvent>() {
                         // Safety: the eBPF side wrote this as a PtraceEvent
-                        let ev = unsafe { &*(item.as_ptr() as *const PtraceEvent) };
-                        info!(
-                            "ptrace blocked: caller_pid={} -> target_pid={}",
-                            ev.caller_pid, ev.target_pid
-                        );
+                        events.push(unsafe { *(item.as_ptr() as *const PtraceEvent) });
                     }
                 }
                 guard.clear_ready();
+                drop(guard);
+
+                for ev in events {
+                    info!(
+                        "ptrace blocked: caller_pid={} -> target_pid={}",
+                        ev.caller_pid, ev.target_pid
+                    );
+                    if demo_fx {
+                        // \x07 = terminal bell
+                        println!("\x07{FX_BLOCKED}");
+                        println!(
+                            "\x1b[1;31m  attack blocked: pid={} -> protected pid={}\x1b[0m",
+                            ev.caller_pid, ev.target_pid
+                        );
+                        // Space out bursts so each block is visible
+                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                    }
+                }
             }
         }
     }
