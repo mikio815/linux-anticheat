@@ -1,15 +1,24 @@
 use anyhow::{Context, Result};
 use aya::maps::{loaded_maps, HashMap, MapData, RingBuf};
 use aya::programs::loaded_links;
-use log::info;
+use log::{info, warn};
 use tokio::io::unix::{AsyncFd, AsyncFdReadyMutGuard};
 use tokio::process::Command;
 use tokio::signal;
-use anticheat_common::PtraceEvent;
+use anticheat_common::{EventHeader, MapFullEvent, ProtFlags, PtraceEvent,
+    EVENT_MAP_FULL, EVENT_PTRACE_BLOCKED, MAP_ID_PROTECTED_PROCS, MAP_ID_WATCH_TGIDS};
 
 mod loader;
 mod maps;
 use maps::MapsScanner;
+
+// Ring buffer records are dispatched on the header tag. Without it, records of
+// different types are indistinguishable and get misparsed as whichever type the
+// reader assumes.
+enum Event {
+    PtraceBlocked(PtraceEvent),
+    MapFull(MapFullEvent),
+}
 
 const MAPS_SCAN_INTERVAL_SECS: u64 = 5;
 
@@ -60,15 +69,15 @@ async fn main() -> Result<()> {
 
     // Game protection: eBPF auto-registers into PROTECTED_PROCS when it observes exec.
     // The daemon only writes its own tgid into WATCH_TGIDS to trigger it.
-    let mut watch_tgids: HashMap<MapData, u32, u8> = HashMap::try_from(
+    let mut watch_tgids: HashMap<MapData, u32, ProtFlags> = HashMap::try_from(
         bpf.take_map("WATCH_TGIDS").context("WATCH_TGIDS not found")?,
     )?;
     // Coarse protection for the daemon itself (tgid only)
-    let mut protected_tgids: HashMap<MapData, u32, u8> = HashMap::try_from(
+    let mut protected_tgids: HashMap<MapData, u32, ProtFlags> = HashMap::try_from(
         bpf.take_map("PROTECTED_TGIDS").context("PROTECTED_TGIDS not found")?,
     )?;
     // Monitor exemption: let the daemon read protected targets' maps/mem
-    let mut monitor_tgids: HashMap<MapData, u32, u8> = HashMap::try_from(
+    let mut monitor_tgids: HashMap<MapData, u32, ProtFlags> = HashMap::try_from(
         bpf.take_map("MONITOR_TGIDS").context("MONITOR_TGIDS not found")?,
     )?;
 
@@ -89,23 +98,23 @@ async fn main() -> Result<()> {
     .collect();
 
     // Walk all kernel links via loaded_links() and protect those bound to our programs
-    let mut protected_links: HashMap<MapData, u32, u8> = HashMap::try_from(
+    let mut protected_links: HashMap<MapData, u32, ProtFlags> = HashMap::try_from(
         bpf.take_map("PROTECTED_LINKS").context("PROTECTED_LINKS not found")?,
     )?;
     for link_info in loaded_links().flatten() {
         if our_prog_ids.contains(&link_info.program_id()) {
             let link_id = link_info.id();
-            protected_links.insert(link_id, 1u8, 0)?;
+            protected_links.insert(link_id, ProtFlags::present(), 0)?;
             info!("link id={} protected", link_id);
         }
     }
 
     // Register our prog IDs as FD-guard targets (deny BPF_PROG_GET_FD_BY_ID)
-    let mut protected_progs: HashMap<MapData, u32, u8> = HashMap::try_from(
+    let mut protected_progs: HashMap<MapData, u32, ProtFlags> = HashMap::try_from(
         bpf.take_map("PROTECTED_PROGS").context("PROTECTED_PROGS not found")?,
     )?;
     for id in &our_prog_ids {
-        protected_progs.insert(*id, 1u8, 0)?;
+        protected_progs.insert(*id, ProtFlags::present(), 0)?;
         info!("prog id={} protected", id);
     }
 
@@ -120,14 +129,15 @@ async fn main() -> Result<()> {
         "PROTECTED_LINKS",
         "PROTECTED_PROGS",
         "PROTECTED_MAPS",
+        "MAP_FULL_REPORTED",
     ];
-    let mut protected_maps: HashMap<MapData, u32, u8> = HashMap::try_from(
+    let mut protected_maps: HashMap<MapData, u32, ProtFlags> = HashMap::try_from(
         bpf.take_map("PROTECTED_MAPS").context("PROTECTED_MAPS not found")?,
     )?;
     for map_info in loaded_maps().flatten() {
         if map_info.name_as_str().is_some_and(|n| OUR_MAPS.contains(&n)) {
             let id = map_info.id();
-            protected_maps.insert(id, 1u8, 0)?;
+            protected_maps.insert(id, ProtFlags::present(), 0)?;
             info!("map id={} protected", id);
         }
     }
@@ -135,9 +145,9 @@ async fn main() -> Result<()> {
     // Write before spawn: the game is the daemon's child, so on exec eBPF registers it
     // if the parent tgid is in WATCH_TGIDS (eliminates the registration race window)
     let daemon_tgid = std::process::id();
-    watch_tgids.insert(daemon_tgid, 1u8, 0)?;
-    protected_tgids.insert(daemon_tgid, 1u8, 0)?;
-    monitor_tgids.insert(daemon_tgid, 1u8, 0)?;
+    watch_tgids.insert(daemon_tgid, ProtFlags::present(), 0)?;
+    protected_tgids.insert(daemon_tgid, ProtFlags::present(), 0)?;
+    monitor_tgids.insert(daemon_tgid, ProtFlags::present(), 0)?;
     info!("daemon tgid={} watched", daemon_tgid);
 
     // getenv can be hooked, so read /proc/self/environ directly
@@ -219,31 +229,66 @@ async fn main() -> Result<()> {
             result = async_fd.readable_mut() => {
                 let mut guard: AsyncFdReadyMutGuard<'_, RingBuf<MapData>> = result?;
                 let rb = guard.get_inner_mut();
-                let mut events: Vec<PtraceEvent> = Vec::new();
+                let mut events: Vec<Event> = Vec::new();
                 while let Some(item) = rb.next() {
                     let item: &[u8] = &item;
-                    if item.len() >= core::mem::size_of::<PtraceEvent>() {
-                        // Safety: the eBPF side wrote this as a PtraceEvent
-                        events.push(unsafe { *(item.as_ptr() as *const PtraceEvent) });
+                    if item.len() < core::mem::size_of::<EventHeader>() {
+                        continue;
+                    }
+                    // Safety: read_unaligned, and each arm checks the full length
+                    let header: EventHeader =
+                        unsafe { core::ptr::read_unaligned(item.as_ptr() as *const EventHeader) };
+                    match header.event_type {
+                        EVENT_PTRACE_BLOCKED
+                            if item.len() >= core::mem::size_of::<PtraceEvent>() =>
+                        {
+                            events.push(Event::PtraceBlocked(unsafe {
+                                core::ptr::read_unaligned(item.as_ptr() as *const PtraceEvent)
+                            }));
+                        }
+                        EVENT_MAP_FULL if item.len() >= core::mem::size_of::<MapFullEvent>() => {
+                            events.push(Event::MapFull(unsafe {
+                                core::ptr::read_unaligned(item.as_ptr() as *const MapFullEvent)
+                            }));
+                        }
+                        other => warn!("unknown event type={} len={}", other, item.len()),
                     }
                 }
                 guard.clear_ready();
                 drop(guard);
 
                 for ev in events {
-                    info!(
-                        "ptrace blocked: caller_pid={} -> target_pid={}",
-                        ev.caller_pid, ev.target_pid
-                    );
-                    if demo_fx {
-                        // \x07 = terminal bell
-                        println!("\x07{FX_BLOCKED}");
-                        println!(
-                            "\x1b[1;31m  attack blocked: pid={} -> protected pid={}\x1b[0m",
-                            ev.caller_pid, ev.target_pid
-                        );
-                        // Space out bursts so each block is visible
-                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                    match ev {
+                        Event::PtraceBlocked(ev) => {
+                            info!(
+                                "ptrace blocked: caller_pid={} -> target_pid={}",
+                                ev.caller_pid, ev.target_pid
+                            );
+                            if demo_fx {
+                                // \x07 = terminal bell
+                                println!("\x07{FX_BLOCKED}");
+                                println!(
+                                    "\x1b[1;31m  attack blocked: pid={} -> protected pid={}\x1b[0m",
+                                    ev.caller_pid, ev.target_pid
+                                );
+                                // Space out bursts so each block is visible
+                                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                            }
+                        }
+                        Event::MapFull(ev) => {
+                            let map = match ev.map_id {
+                                MAP_ID_PROTECTED_PROCS => "PROTECTED_PROCS",
+                                MAP_ID_WATCH_TGIDS => "WATCH_TGIDS",
+                                _ => "unknown",
+                            };
+                            // Registration failed, so this process and every later one
+                            // is unprotected until capacity frees up (it never does --
+                            // entries are not removed). Raise the map size.
+                            warn!(
+                                "PROTECTION MAP FULL: {} rejected tgid={}, further processes are unprotected",
+                                map, ev.tgid
+                            );
+                        }
                     }
                 }
             }

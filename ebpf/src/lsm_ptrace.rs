@@ -3,10 +3,10 @@ use aya_ebpf::{
     macros::lsm,
     programs::LsmContext,
 };
-use anticheat_common::{ProcessKey, PtraceEvent};
+use anticheat_common::{EventHeader, ProcessKey, PtraceEvent, EVENT_PTRACE_BLOCKED};
 
 use crate::vmlinux::task_struct;
-use crate::{EVENTS, MONITOR_TGIDS, PROTECTED_PROCS, PROTECTED_TGIDS};
+use crate::{now_ns, EVENTS, MONITOR_TGIDS, PROTECTED_PROCS, PROTECTED_TGIDS};
 
 #[lsm(hook = "ptrace_access_check")]
 pub fn ptrace_access_check(ctx: LsmContext) -> i32 {
@@ -60,9 +60,13 @@ unsafe fn try_ptrace_access_check(ctx: LsmContext) -> Result<i32, i64> {
     }
 
     if let Some(mut entry) = EVENTS.reserve::<PtraceEvent>(0) {
-        // Safety: writing into the reserved region
-        (*entry.as_mut_ptr()).caller_pid = caller_tgid;
-        (*entry.as_mut_ptr()).target_pid = target_tgid;
+        // Writing the whole struct initializes the padding too, so no
+        // uninitialized kernel memory reaches userspace
+        entry.write(PtraceEvent {
+            header: EventHeader::new(EVENT_PTRACE_BLOCKED, now_ns()),
+            caller_pid: caller_tgid,
+            target_pid: target_tgid,
+        });
         entry.submit(0);
     }
 
@@ -107,9 +111,13 @@ unsafe fn try_ptrace_traceme(ctx: LsmContext) -> Result<i32, i64> {
     };
 
     if let Some(mut entry) = EVENTS.reserve::<PtraceEvent>(0) {
-        // Safety: writing into the reserved region
-        (*entry.as_mut_ptr()).caller_pid = caller_tgid;
-        (*entry.as_mut_ptr()).target_pid = target_tgid;
+        // Writing the whole struct initializes the padding too, so no
+        // uninitialized kernel memory reaches userspace
+        entry.write(PtraceEvent {
+            header: EventHeader::new(EVENT_PTRACE_BLOCKED, now_ns()),
+            caller_pid: caller_tgid,
+            target_pid: target_tgid,
+        });
         entry.submit(0);
     }
 

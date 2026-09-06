@@ -3,10 +3,10 @@ use aya_ebpf::{
     macros::tracepoint,
     programs::TracePointContext,
 };
-use anticheat_common::ProcessKey;
+use anticheat_common::{ProcessKey, ProtFlags, MAP_ID_PROTECTED_PROCS, MAP_ID_WATCH_TGIDS};
 
 use crate::vmlinux::task_struct;
-use crate::{PROTECTED_PROCS, WATCH_TGIDS};
+use crate::{report_map_full, PROTECTED_PROCS, WATCH_TGIDS};
 
 // On exec, if the parent is watched, register self as protected and propagate watch to self.
 // This tracks the game's whole fork-exec descendant process tree.
@@ -45,6 +45,10 @@ unsafe fn try_exec() {
         _pad: 0,
         start_time: (*leader).start_time,
     };
-    let _ = PROTECTED_PROCS.insert(&key, &1u8, 0);
-    let _ = WATCH_TGIDS.insert(&tgid, &1u8, 0);
+    if PROTECTED_PROCS.insert(&key, &ProtFlags::present(), 0).is_err() {
+        report_map_full(MAP_ID_PROTECTED_PROCS, tgid);
+    }
+    if WATCH_TGIDS.insert(&tgid, &ProtFlags::present(), 0).is_err() {
+        report_map_full(MAP_ID_WATCH_TGIDS, tgid);
+    }
 }
