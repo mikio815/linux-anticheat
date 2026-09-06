@@ -25,9 +25,13 @@ pub fn bpf_hook(ctx: LsmContext) -> i32 {
 
 unsafe fn try_bpf(ctx: LsmContext) -> Result<i32, i64> {
     let cmd: u32 = ctx.arg(0);
-    let retval: i32 = ctx.arg(3);
+    // Read as i64: an i32 read makes aya emit a zero-extending truncation,
+    // which turns a negative errno into a large positive value and loses the
+    // [-4095, 0] range the verifier tracks for this argument. Kernel 7.1
+    // rejects the resulting return value; older verifiers let it through.
+    let retval: i64 = ctx.arg(3);
     if retval != 0 {
-        return Ok(retval);
+        return Ok(-1); // something already denied; keep it denied
     }
 
     // attr is a pointer already copied into the kernel

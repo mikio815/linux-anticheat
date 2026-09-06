@@ -20,9 +20,13 @@ pub fn file_mprotect(ctx: LsmContext) -> i32 {
 }
 
 unsafe fn try_file_mprotect(ctx: LsmContext) -> Result<i32, i64> {
-    let retval: i32 = ctx.arg(3);
+    // Read as i64: an i32 read makes aya emit a zero-extending truncation,
+    // which turns a negative errno into a large positive value and loses the
+    // [-4095, 0] range the verifier tracks for this argument. Kernel 7.1
+    // rejects the resulting return value; older verifiers let it through.
+    let retval: i64 = ctx.arg(3);
     if retval != 0 {
-        return Ok(retval);
+        return Ok(-1); // something already denied; keep it denied
     }
 
     let reqprot: u64 = ctx.arg(1);
@@ -51,9 +55,13 @@ pub fn mmap_file(ctx: LsmContext) -> i32 {
 }
 
 unsafe fn try_mmap_file(ctx: LsmContext) -> Result<i32, i64> {
-    let retval: i32 = ctx.arg(4);
+    // Read as i64: an i32 read makes aya emit a zero-extending truncation,
+    // which turns a negative errno into a large positive value and loses the
+    // [-4095, 0] range the verifier tracks for this argument. Kernel 7.1
+    // rejects the resulting return value; older verifiers let it through.
+    let retval: i64 = ctx.arg(4);
     if retval != 0 {
-        return Ok(retval);
+        return Ok(-1); // something already denied; keep it denied
     }
 
     // Check the prot bits before the map lookup: this hook fires on every mmap in

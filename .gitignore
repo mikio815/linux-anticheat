@@ -6,6 +6,12 @@ ebpf/target/
 *.o
 *.d
 
+# Generated from the running kernel's BTF and only valid for that kernel.
+# Committing it hides which kernel it was built for, and a stale copy can make
+# scalar field reads silently return the wrong data. `make` regenerates it.
+ebpf/src/vmlinux.rs
+ebpf/src/.vmlinux-kernel
+
 # Secrets / credentials
 .env
 *.pem

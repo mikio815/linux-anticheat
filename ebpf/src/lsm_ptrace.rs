@@ -25,9 +25,13 @@ pub fn ptrace_traceme(ctx: LsmContext) -> i32 {
 }
 
 unsafe fn try_ptrace_access_check(ctx: LsmContext) -> Result<i32, i64> {
-    let retval: i32 = ctx.arg(2);
+    // Read as i64: an i32 read makes aya emit a zero-extending truncation,
+    // which turns a negative errno into a large positive value and loses the
+    // [-4095, 0] range the verifier tracks for this argument. Kernel 7.1
+    // rejects the resulting return value; older verifiers let it through.
+    let retval: i64 = ctx.arg(2);
     if retval != 0 {
-        return Ok(retval);
+        return Ok(-1); // something already denied; keep it denied
     }
 
     // Safety: child is a valid task_struct passed by the LSM hook (PTR_TO_BTF_ID).
@@ -74,9 +78,13 @@ unsafe fn try_ptrace_access_check(ctx: LsmContext) -> Result<i32, i64> {
 }
 
 unsafe fn try_ptrace_traceme(ctx: LsmContext) -> Result<i32, i64> {
-    let retval: i32 = ctx.arg(1);
+    // Read as i64: an i32 read makes aya emit a zero-extending truncation,
+    // which turns a negative errno into a large positive value and loses the
+    // [-4095, 0] range the verifier tracks for this argument. Kernel 7.1
+    // rejects the resulting return value; older verifiers let it through.
+    let retval: i64 = ctx.arg(1);
     if retval != 0 {
-        return Ok(retval);
+        return Ok(-1); // something already denied; keep it denied
     }
 
     // Safety: bpf_get_current_task_btf() returns PTR_TO_BTF_ID, so the verifier
