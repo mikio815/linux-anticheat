@@ -86,6 +86,7 @@ async fn main() -> Result<()> {
         "ptrace_access_check",
         "ptrace_traceme",
         "file_mprotect",
+        "mmap_file",
         "bpf_hook",
         "sched_process_exec",
     ]

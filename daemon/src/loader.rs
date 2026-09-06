@@ -12,6 +12,7 @@ pub fn load(obj_bytes: &'static [u8]) -> Result<Ebpf> {
         ("ptrace_access_check", "ptrace_access_check"),
         ("ptrace_traceme", "ptrace_traceme"),
         ("file_mprotect", "file_mprotect"),
+        ("mmap_file", "mmap_file"),
         ("bpf_hook", "bpf"),
     ] {
         let lsm: &mut Lsm = bpf

@@ -94,6 +94,63 @@ static int test_rx_allowed(long page_size, const char *label) {
     return 1;
 }
 
+/* mmap(PROT_READ|PROT_WRITE|PROT_EXEC) needs no mprotect call, so it bypasses
+ * W^X enforced only at file_mprotect. This is what the mmap_file hook closes. */
+static int test_mmap_rwx_blocked(long page_size) {
+    errno = 0;
+    void *p = mmap(NULL, page_size, PROT_READ | PROT_WRITE | PROT_EXEC,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    int err = errno;
+
+    if (p == MAP_FAILED && is_perm_error(err)) {
+        printf("PASS protected mmap RWX blocked errno=%d %s\n", err, strerror(err));
+        return 0;
+    }
+
+    if (p != MAP_FAILED) {
+        munmap(p, page_size);
+        printf("FAIL protected mmap RWX allowed\n");
+        return 1;
+    }
+
+    printf("FAIL protected mmap RWX errno=%d %s\n", err, strerror(err));
+    return 1;
+}
+
+static int test_mmap_rwx_allowed(long page_size) {
+    errno = 0;
+    void *p = mmap(NULL, page_size, PROT_READ | PROT_WRITE | PROT_EXEC,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    int err = errno;
+
+    if (p != MAP_FAILED) {
+        munmap(p, page_size);
+        printf("PASS control mmap RWX allowed\n");
+        return 0;
+    }
+
+    printf("FAIL control mmap RWX errno=%d %s\n", err, strerror(err));
+    return 1;
+}
+
+/* Anonymous R+X is what a legitimate JIT looks like once it stops writing, so it
+ * must stay allowed. Only simultaneous W+X is denied. */
+static int test_mmap_rx_allowed(long page_size, const char *label) {
+    errno = 0;
+    void *p = mmap(NULL, page_size, PROT_READ | PROT_EXEC,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    int err = errno;
+
+    if (p != MAP_FAILED) {
+        munmap(p, page_size);
+        printf("PASS %s mmap RX allowed\n", label);
+        return 0;
+    }
+
+    printf("FAIL %s mmap RX errno=%d %s\n", label, err, strerror(err));
+    return 1;
+}
+
 int main(int argc, char **argv) {
     if (argc != 4) {
         fprintf(stderr, "usage: %s <protected|control> <pidfile> <resultfile>\n", argv[0]);
@@ -119,6 +176,9 @@ int main(int argc, char **argv) {
     int failures = 0;
     failures += test_rx_allowed(page_size, argv[1]);
     failures += protected_mode ? test_rwx_blocked(page_size) : test_rwx_allowed(page_size);
+    failures += test_mmap_rx_allowed(page_size, argv[1]);
+    failures += protected_mode ? test_mmap_rwx_blocked(page_size)
+                               : test_mmap_rwx_allowed(page_size);
 
     write_result(argv[3], failures ? "RESULT: FAIL" : "RESULT: PASS");
     return failures ? 1 : 0;

@@ -22,12 +22,12 @@ gcc -O0 -Wall -Wextra -o "$PROBE" "$HERE/wx_probe.c" || exit 1
 
 [ -x "$DAEMON" ] || { echo "daemon not built: $DAEMON"; exit 1; }
 
-echo "=== unprotected control (expect RWX allowed, RX allowed) ==="
+echo "=== unprotected control (expect mprotect/mmap RWX allowed, RX allowed) ==="
 sudo rm -f "$CTRL_PIDFILE" "$CTRL_RESULT"
 sudo "$PROBE" control "$CTRL_PIDFILE" "$CTRL_RESULT"
 cat "$CTRL_RESULT"
 
-echo "=== protected target (expect RWX blocked, RX allowed) ==="
+echo "=== protected target (expect mprotect/mmap RWX blocked, RX allowed) ==="
 sudo pkill -f target/debug/anticheat 2>/dev/null
 sudo rm -f "$PROT_PIDFILE" "$PROT_RESULT" "$DLOG"
 sudo "$DAEMON" "$PROBE" protected "$PROT_PIDFILE" "$PROT_RESULT" >"$DLOG" 2>&1 &
