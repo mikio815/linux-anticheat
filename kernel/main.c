@@ -13,7 +13,9 @@
 #include <linux/module.h>
 #include <linux/sched/task.h>
 
-static unsigned long (*kallsyms_lookup_name_fn)(const char *name);
+#include "anticheat.h"
+
+unsigned long (*kallsyms_lookup_name_fn)(const char *name);
 
 /*
  * kallsyms_lookup_name() lost its export in 5.7, and so did
@@ -110,12 +112,17 @@ static int __init anticheat_init(void)
 
 	probe_wanted_symbols();
 
+	ret = ebpf_guard_init();
+	if (ret)
+		return ret;
+
 	pr_info("anticheat: loaded\n");
 	return 0;
 }
 
 static void __exit anticheat_exit(void)
 {
+	ebpf_guard_exit();
 	pr_info("anticheat: unloaded\n");
 }
 

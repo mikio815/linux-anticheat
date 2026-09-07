@@ -2,6 +2,7 @@
 # not on the machine that builds the eBPF and daemon parts -- the module has to
 # be compiled against the exact kernel it will be loaded into.
 obj-m += anticheat.o
+anticheat-y := main.o ebpf_guard.o
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 PWD  := $(CURDIR)
