@@ -2,6 +2,7 @@
 #![no_main]
 
 use aya_ebpf::helpers::bpf_ktime_get_ns;
+use crate::vmlinux::task_struct;
 use aya_ebpf::macros::map;
 use aya_ebpf::maps::{Array, HashMap, RingBuf};
 use anticheat_common::{EventHeader, MapFullEvent, ProcessKey, ProtFlags, EVENT_MAP_FULL};
@@ -14,6 +15,7 @@ mod vmlinux;
 mod lsm_bpf;
 mod lsm_mmap;
 mod lsm_ptrace;
+mod lsm_signal;
 mod sched_exec;
 
 #[map]
@@ -60,6 +62,38 @@ pub static PROTECTED_MAPS: HashMap<u32, ProtFlags> = HashMap::with_max_entries(1
 // duplicate report.
 #[map]
 pub static MAP_FULL_REPORTED: Array<u32> = Array::with_max_entries(4, 0);
+
+// Whether a task is under protection. PROTECTED_PROCS keys on (tgid+start_time)
+// so PID reuse cannot produce a false hit; PROTECTED_TGIDS is the daemon's own
+// coarse protection, which is tgid-only until its lifetime is settled.
+//
+// Safety: caller passes a valid task_struct (PTR_TO_BTF_ID from an LSM argument
+// or bpf_get_current_task_btf); the verifier rewrites the field reads into
+// probe reads.
+pub unsafe fn task_is_protected(task: *const task_struct) -> bool {
+    if task.is_null() {
+        return false;
+    }
+
+    let tgid = (*task).tgid as u32;
+    if PROTECTED_TGIDS.get(&tgid).is_some() {
+        return true;
+    }
+
+    let leader = if (*task).group_leader.is_null() {
+        task
+    } else {
+        (*task).group_leader
+    };
+
+    let key = ProcessKey {
+        pid: tgid,
+        _pad: 0,
+        start_time: (*leader).start_time,
+    };
+
+    PROTECTED_PROCS.get(&key).is_some()
+}
 
 pub fn now_ns() -> u64 {
     // Safety: bpf_ktime_get_ns is always available to LSM and tracepoint programs

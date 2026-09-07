@@ -3,10 +3,8 @@ use aya_ebpf::{
     macros::lsm,
     programs::LsmContext,
 };
-use anticheat_common::ProcessKey;
-
 use crate::vmlinux::task_struct;
-use crate::{PROTECTED_PROCS, PROTECTED_TGIDS};
+use crate::task_is_protected;
 
 const PROT_WRITE: u64 = 0x2;
 const PROT_EXEC: u64 = 0x4;
@@ -85,27 +83,5 @@ fn has_wx(prot: u64) -> bool {
 }
 
 unsafe fn current_is_protected() -> bool {
-    let task = bpf_get_current_task_btf() as *const task_struct;
-    if task.is_null() {
-        return false;
-    }
-
-    let tgid = (*task).tgid as u32;
-    if PROTECTED_TGIDS.get(&tgid).is_some() {
-        return true;
-    }
-
-    let leader = if (*task).group_leader.is_null() {
-        task
-    } else {
-        (*task).group_leader
-    };
-
-    let key = ProcessKey {
-        pid: tgid,
-        _pad: 0,
-        start_time: (*leader).start_time,
-    };
-
-    PROTECTED_PROCS.get(&key).is_some()
+    task_is_protected(bpf_get_current_task_btf() as *const task_struct)
 }

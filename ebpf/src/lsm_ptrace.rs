@@ -3,10 +3,10 @@ use aya_ebpf::{
     macros::lsm,
     programs::LsmContext,
 };
-use anticheat_common::{EventHeader, ProcessKey, PtraceEvent, EVENT_PTRACE_BLOCKED};
+use anticheat_common::{EventHeader, PtraceEvent, EVENT_PTRACE_BLOCKED};
 
 use crate::vmlinux::task_struct;
-use crate::{now_ns, EVENTS, MONITOR_TGIDS, PROTECTED_PROCS, PROTECTED_TGIDS};
+use crate::{now_ns, task_is_protected, EVENTS, MONITOR_TGIDS};
 
 #[lsm(hook = "ptrace_access_check")]
 pub fn ptrace_access_check(ctx: LsmContext) -> i32 {
@@ -37,24 +37,10 @@ unsafe fn try_ptrace_access_check(ctx: LsmContext) -> Result<i32, i64> {
     // Safety: child is a valid task_struct passed by the LSM hook (PTR_TO_BTF_ID).
     // The verifier rewrites field reads into probe reads.
     let child: *const task_struct = ctx.arg(0);
-    let target_tgid = (*child).tgid as u32;
-    let leader = if (*child).group_leader.is_null() {
-        child
-    } else {
-        (*child).group_leader
-    };
-
-    let key = ProcessKey {
-        pid: target_tgid,
-        _pad: 0,
-        start_time: (*leader).start_time,
-    };
-
-    // PROTECTED_PROCS keys on (tgid+start_time), robust against PID reuse.
-    // PROTECTED_TGIDS is the daemon's own coarse protection (tgid only).
-    if PROTECTED_PROCS.get(&key).is_none() && PROTECTED_TGIDS.get(&target_tgid).is_none() {
+    if !task_is_protected(child) {
         return Ok(0);
     }
+    let target_tgid = (*child).tgid as u32;
 
     let caller_tgid = (bpf_get_current_pid_tgid() >> 32) as u32;
 
@@ -94,22 +80,10 @@ unsafe fn try_ptrace_traceme(ctx: LsmContext) -> Result<i32, i64> {
         return Ok(0);
     }
 
-    let target_tgid = (*task).tgid as u32;
-    let leader = if (*task).group_leader.is_null() {
-        task
-    } else {
-        (*task).group_leader
-    };
-
-    let key = ProcessKey {
-        pid: target_tgid,
-        _pad: 0,
-        start_time: (*leader).start_time,
-    };
-
-    if PROTECTED_PROCS.get(&key).is_none() && PROTECTED_TGIDS.get(&target_tgid).is_none() {
+    if !task_is_protected(task) {
         return Ok(0);
     }
+    let target_tgid = (*task).tgid as u32;
 
     let parent: *const task_struct = ctx.arg(0);
     let caller_tgid = if parent.is_null() {

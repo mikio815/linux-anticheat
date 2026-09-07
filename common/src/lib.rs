@@ -32,6 +32,7 @@ impl ProtFlags {
 
 pub const EVENT_PTRACE_BLOCKED: u16 = 1;
 pub const EVENT_MAP_FULL: u16 = 2;
+pub const EVENT_SIGNAL_TO_PROTECTED: u16 = 3;
 
 pub const MAP_ID_PROTECTED_PROCS: u32 = 0;
 pub const MAP_ID_WATCH_TGIDS: u32 = 1;
@@ -81,6 +82,20 @@ pub struct MapFullEvent {
     pub tgid: u32,
 }
 
+/// A terminating or stopping signal was aimed at a protected process. Killing
+/// the daemon unloads the eBPF programs with it, and that path never touches
+/// the bpf() syscall, so the bpf hook cannot see it -- this is what attributes
+/// the attempt to a caller.
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub struct SignalEvent {
+    pub header: EventHeader,
+    pub caller_pid: u32,
+    pub target_pid: u32,
+    pub sig: u32,
+    pub _pad: u32,
+}
+
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for ProcessKey {}
 
@@ -92,3 +107,6 @@ unsafe impl aya::Pod for PtraceEvent {}
 
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for MapFullEvent {}
+
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for SignalEvent {}

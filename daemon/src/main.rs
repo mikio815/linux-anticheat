@@ -5,8 +5,9 @@ use log::{info, warn};
 use tokio::io::unix::{AsyncFd, AsyncFdReadyMutGuard};
 use tokio::process::Command;
 use tokio::signal;
-use anticheat_common::{EventHeader, MapFullEvent, ProtFlags, PtraceEvent,
-    EVENT_MAP_FULL, EVENT_PTRACE_BLOCKED, MAP_ID_PROTECTED_PROCS, MAP_ID_WATCH_TGIDS};
+use anticheat_common::{EventHeader, MapFullEvent, ProtFlags, PtraceEvent, SignalEvent,
+    EVENT_MAP_FULL, EVENT_PTRACE_BLOCKED, EVENT_SIGNAL_TO_PROTECTED,
+    MAP_ID_PROTECTED_PROCS, MAP_ID_WATCH_TGIDS};
 
 mod loader;
 mod maps;
@@ -18,6 +19,7 @@ use maps::MapsScanner;
 enum Event {
     PtraceBlocked(PtraceEvent),
     MapFull(MapFullEvent),
+    SignalToProtected(SignalEvent),
 }
 
 const MAPS_SCAN_INTERVAL_SECS: u64 = 5;
@@ -87,6 +89,7 @@ async fn main() -> Result<()> {
         "ptrace_traceme",
         "file_mprotect",
         "mmap_file",
+        "task_kill",
         "bpf_hook",
         "sched_process_exec",
     ]
@@ -252,6 +255,13 @@ async fn main() -> Result<()> {
                                 core::ptr::read_unaligned(item.as_ptr() as *const MapFullEvent)
                             }));
                         }
+                        EVENT_SIGNAL_TO_PROTECTED
+                            if item.len() >= core::mem::size_of::<SignalEvent>() =>
+                        {
+                            events.push(Event::SignalToProtected(unsafe {
+                                core::ptr::read_unaligned(item.as_ptr() as *const SignalEvent)
+                            }));
+                        }
                         other => warn!("unknown event type={} len={}", other, item.len()),
                     }
                 }
@@ -275,6 +285,15 @@ async fn main() -> Result<()> {
                                 // Space out bursts so each block is visible
                                 tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                             }
+                        }
+                        Event::SignalToProtected(ev) => {
+                            // Killing the daemon takes the eBPF programs with it,
+                            // and that path never reaches the bpf() hook, so this
+                            // is the only place the caller gets attributed.
+                            warn!(
+                                "signal to protected process: caller_pid={} -> target_pid={} sig={}",
+                                ev.caller_pid, ev.target_pid, ev.sig
+                            );
                         }
                         Event::MapFull(ev) => {
                             let map = match ev.map_id {
