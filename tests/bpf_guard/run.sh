@@ -47,4 +47,15 @@ fi
 echo "protected prog id=$PROG_ID map id=$MAP_ID link id=$LINK_ID"
 
 echo "=== bpf guard probe ==="
-sudo "$PROBE" "$PROG_ID" "$MAP_ID" "$LINK_ID"
+# The hook denies LSM loads by attach target, so the probe needs a btf_id it
+# should be refused (one of our hooks) and one it should not (anything else --
+# file_open is what systemd's RestrictFileSystems= attaches to).
+btf_id() {
+    sudo bpftool btf dump file /sys/kernel/btf/vmlinux format raw 2>/dev/null \
+        | grep -oE "^\[[0-9]+\] FUNC '$1' " | grep -oE "[0-9]+" | head -1
+}
+GUARDED_BTF="$(btf_id bpf_lsm_ptrace_access_check)"
+OTHER_BTF="$(btf_id bpf_lsm_file_open)"
+[ -n "$GUARDED_BTF" ] && [ -n "$OTHER_BTF" ] || { echo "could not resolve bpf_lsm_* btf ids"; exit 1; }
+
+sudo "$PROBE" "$PROG_ID" "$MAP_ID" "$LINK_ID" "$GUARDED_BTF" "$OTHER_BTF"

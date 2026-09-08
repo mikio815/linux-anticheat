@@ -81,7 +81,15 @@ static int expect_missing_not_blocked(enum bpf_cmd cmd, const char *label) {
     return 0;
 }
 
-static int expect_lsm_load_blocked(void) {
+/*
+ * The hook denies an LSM load by its attach target, not by program type. A
+ * blanket type deny also took out unrelated BPF LSM users -- systemd implements
+ * RestrictFileSystems= as an LSM program, and it treats a failed load as "no BPF
+ * on this kernel", so that restriction silently stopped being enforced. Hence
+ * two cases: a load aimed at one of our hooks must be refused, and a load aimed
+ * at any other hook must get through.
+ */
+static int try_lsm_load(uint32_t attach_btf_id) {
     static const char license[] = "GPL";
     union bpf_attr attr = {};
 
@@ -89,21 +97,43 @@ static int expect_lsm_load_blocked(void) {
     attr.insn_cnt = 0;
     attr.insns = 0;
     attr.license = (uint64_t)(uintptr_t)license;
+    attr.attach_btf_id = attach_btf_id;
 
     errno = 0;
     int fd = bpf_sys(BPF_PROG_LOAD, &attr);
     int err = errno;
     if (fd >= 0) {
         close(fd);
-        printf("FAIL %-24s allowed fd=%d\n", "BPF_PROG_LOAD LSM", fd);
+        return 0;
+    }
+    return err;
+}
+
+static int expect_lsm_load_blocked(uint32_t guarded_btf_id) {
+    int err = try_lsm_load(guarded_btf_id);
+
+    if (err == 0) {
+        printf("FAIL %-24s allowed\n", "LSM load, our hook");
         return 1;
     }
     if (is_perm_error(err)) {
-        printf("PASS %-24s blocked errno=%d %s\n", "BPF_PROG_LOAD LSM", err, strerror(err));
+        printf("PASS %-24s blocked errno=%d %s\n", "LSM load, our hook", err, strerror(err));
         return 0;
     }
-    printf("FAIL %-24s errno=%d %s\n", "BPF_PROG_LOAD LSM", err, strerror(err));
+    printf("FAIL %-24s errno=%d %s\n", "LSM load, our hook", err, strerror(err));
     return 1;
+}
+
+static int expect_other_lsm_load_not_blocked(uint32_t other_btf_id) {
+    int err = try_lsm_load(other_btf_id);
+
+    if (is_perm_error(err)) {
+        printf("FAIL %-24s permission-blocked errno=%d %s\n", "LSM load, other hook", err, strerror(err));
+        return 1;
+    }
+    printf("PASS %-24s not permission-blocked errno=%d %s\n", "LSM load, other hook",
+           err, err ? strerror(err) : "allowed");
+    return 0;
 }
 
 static int expect_non_lsm_load_not_blocked(void) {
@@ -132,14 +162,18 @@ static int expect_non_lsm_load_not_blocked(void) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 4) {
-        fprintf(stderr, "usage: %s <protected_prog_id> <protected_map_id> <protected_link_id>\n", argv[0]);
+    if (argc != 6) {
+        fprintf(stderr,
+                "usage: %s <protected_prog_id> <protected_map_id> <protected_link_id>"
+                " <guarded_lsm_btf_id> <other_lsm_btf_id>\n", argv[0]);
         return 2;
     }
 
     unsigned int prog_id = parse_id(argv[1], "prog");
     unsigned int map_id = parse_id(argv[2], "map");
     unsigned int link_id = parse_id(argv[3], "link");
+    unsigned int guarded_btf_id = parse_id(argv[4], "guarded btf");
+    unsigned int other_btf_id = parse_id(argv[5], "other btf");
     int failures = 0;
 
     failures += expect_blocked(BPF_PROG_GET_FD_BY_ID, prog_id, "BPF_PROG_GET_FD");
@@ -150,7 +184,8 @@ int main(int argc, char **argv) {
     failures += expect_missing_not_blocked(BPF_MAP_GET_FD_BY_ID, "BPF_MAP_MISSING");
     failures += expect_missing_not_blocked(BPF_LINK_GET_FD_BY_ID, "BPF_LINK_MISSING");
 
-    failures += expect_lsm_load_blocked();
+    failures += expect_lsm_load_blocked(guarded_btf_id);
+    failures += expect_other_lsm_load_not_blocked(other_btf_id);
     failures += expect_non_lsm_load_not_blocked();
 
     return failures ? 1 : 0;

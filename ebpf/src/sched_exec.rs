@@ -1,7 +1,7 @@
 use aya_ebpf::{
     helpers::bpf_get_current_task_btf,
-    macros::tracepoint,
-    programs::TracePointContext,
+    macros::raw_tracepoint,
+    programs::RawTracePointContext,
 };
 use anticheat_common::{ProcessKey, ProtFlags, MAP_ID_PROTECTED_PROCS, MAP_ID_WATCH_TGIDS};
 
@@ -10,8 +10,15 @@ use crate::{report_map_full, PROTECTED_PROCS, WATCH_TGIDS};
 
 // On exec, if the parent is watched, register self as protected and propagate watch to self.
 // This tracks the game's whole fork-exec descendant process tree.
-#[tracepoint]
-pub fn sched_process_exec(_ctx: TracePointContext) -> u32 {
+//
+// A raw tracepoint rather than a tracepoint: attaching the latter means reading
+// the event id out of tracefs and going through perf_event_open, and tracefs is
+// not populated at all under lockdown=confidentiality, so the attach fails. A raw
+// tracepoint attaches through bpf(BPF_RAW_TRACEPOINT_OPEN) by name, the same path
+// the LSM programs already use. The two fire from the same trace_sched_process_exec()
+// call site, and nothing here reads the context, so only the attach path changes.
+#[raw_tracepoint(tracepoint = "sched_process_exec")]
+pub fn sched_process_exec(_ctx: RawTracePointContext) -> i32 {
     unsafe { try_exec() };
     0
 }

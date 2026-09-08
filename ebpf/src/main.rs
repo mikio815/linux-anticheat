@@ -12,6 +12,10 @@ use anticheat_common::{EventHeader, MapFullEvent, ProcessKey, ProtFlags, EVENT_M
 #[rustfmt::skip]
 mod vmlinux;
 
+// Adding or removing an #[lsm(hook = ...)] below means editing `shims[]` in
+// kernel/ebpf_guard.c to match. That list is what the kernel module watches to
+// notice a hook being detached, and a hook missing from it is a hook nothing
+// guards -- detaching it takes five bytes and produces no report at all.
 mod lsm_bpf;
 mod lsm_mmap;
 mod lsm_ptrace;
@@ -51,6 +55,18 @@ pub static PROTECTED_LINKS: HashMap<u32, ProtFlags> = HashMap::with_max_entries(
 // Protected kernel prog IDs
 #[map]
 pub static PROTECTED_PROGS: HashMap<u32, ProtFlags> = HashMap::with_max_entries(16, 0);
+
+// btf_ids of the bpf_lsm_* functions this anti-cheat attaches to, written by the
+// loader before the bpf hook goes live.
+//
+// The bpf hook used to deny every BPF_PROG_TYPE_LSM load outright. That also
+// took out systemd's RestrictFileSystems=, which is itself a BPF LSM program --
+// and systemd treats a failed BPF load as "no BPF on this kernel" rather than an
+// error, so the restriction silently stopped being enforced with nothing in the
+// journal to show for it. Matching on the attach target instead denies only the
+// loads aimed at hooks this anti-cheat owns.
+#[map]
+pub static GUARDED_ATTACH_IDS: HashMap<u32, ProtFlags> = HashMap::with_max_entries(16, 0);
 
 // Protected kernel map IDs
 #[map]

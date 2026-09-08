@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 aya = { git = "https://github.com/aya-rs/aya" }
+# for BtfKind, which aya re-exports only Btf/BtfError from
+aya-obj = { git = "https://github.com/aya-rs/aya" }
 aya-log = { git = "https://github.com/aya-rs/aya" }
 anticheat-common = { path = "../common", features = ["user"] }
 anyhow = "1"

@@ -1,11 +1,11 @@
 use aya_ebpf::{
     bindings::{bpf_cmd, bpf_prog_type},
-    helpers::bpf_probe_read_kernel,
     macros::lsm,
     programs::LsmContext,
 };
 
-use crate::{PROTECTED_LINKS, PROTECTED_MAPS, PROTECTED_PROGS};
+use crate::vmlinux::bpf_attr;
+use crate::{GUARDED_ATTACH_IDS, PROTECTED_LINKS, PROTECTED_MAPS, PROTECTED_PROGS};
 
 // LSM hook for the bpf() syscall.
 // We guard protected-object FD acquisition and deny later BPF LSM loads.
@@ -16,9 +16,9 @@ use crate::{PROTECTED_LINKS, PROTECTED_MAPS, PROTECTED_PROGS};
 pub fn bpf_hook(ctx: LsmContext) -> i32 {
     match unsafe { try_bpf(ctx) } {
         Ok(ret) => ret,
-        // fail-open: bpf() is a syscall the daemon itself uses heavily.
-        // Blocking every bpf() on a probe-read failure would kill the daemon,
-        // so let it through when undecidable. We only guard FD acquisition for specific IDs.
+        // fail-open: bpf() is a syscall the daemon itself uses heavily, so an
+        // undecidable case must not turn into a denial that kills it. Only FD
+        // acquisition for specific IDs and LSM loads aimed at our hooks are guarded.
         Err(_) => 0,
     }
 }
@@ -34,19 +34,37 @@ unsafe fn try_bpf(ctx: LsmContext) -> Result<i32, i64> {
         return Ok(-1); // something already denied; keep it denied
     }
 
-    // attr is a pointer already copied into the kernel
-    let attr: *const u32 = ctx.arg(1);
+    // attr is already a kernel copy, and the verifier types this argument as
+    // PTR_TO_BTF_ID for union bpf_attr, so the fields below are plain loads.
+    // bpf_probe_read_kernel() would read the same bytes, but its helper proto is
+    // withdrawn under lockdown=confidentiality (LOCKDOWN_BPF_READ_KERNEL) and the
+    // program then fails to load at all rather than degrading.
+    let attr: *const bpf_attr = ctx.arg(1);
 
-    // Prevent a later BPF LSM program from overriding this hook's denial.
     if cmd == bpf_cmd::BPF_PROG_LOAD {
-        let prog_type = bpf_probe_read_kernel(attr)?;
-        if prog_type == bpf_prog_type::BPF_PROG_TYPE_LSM {
+        let load = &(*attr).__bindgen_anon_3;
+        if load.prog_type != bpf_prog_type::BPF_PROG_TYPE_LSM {
+            return Ok(0);
+        }
+        // Deny only LSM programs aimed at the hooks this anti-cheat owns. A
+        // blanket deny is both wider and narrower than it looks: it breaks
+        // unrelated BPF LSM users (see GUARDED_ATTACH_IDS), and it never bought
+        // what its old comment claimed -- a second program on the same hook
+        // cannot turn a denial into an allow, because the trampoline stops at the
+        // first non-zero return and the verifier confines LSM returns to
+        // [-4095, 0]. This stays as a guard against attach paths not yet
+        // enumerated, not as the thing that makes the denial stick.
+        // Copied to the stack first: passing &load.attach_btf_id hands the
+        // helper a pointer into a PTR_TO_BTF_ID object, and the verifier rejects
+        // that because a map lookup is allowed to write through its key pointer.
+        let attach_id = load.attach_btf_id;
+        if GUARDED_ATTACH_IDS.get(&attach_id).is_some() {
             return Ok(-1); // EPERM
         }
         return Ok(0);
     }
 
-    // Only GET_FD_BY_ID commands. The first u32 of attr is prog_id / map_id / link_id.
+    // Only GET_FD_BY_ID commands. prog_id / map_id / link_id share one union.
     let target = match cmd {
         bpf_cmd::BPF_PROG_GET_FD_BY_ID => &PROTECTED_PROGS,
         bpf_cmd::BPF_MAP_GET_FD_BY_ID => &PROTECTED_MAPS,
@@ -54,7 +72,7 @@ unsafe fn try_bpf(ctx: LsmContext) -> Result<i32, i64> {
         _ => return Ok(0),
     };
 
-    let id = bpf_probe_read_kernel(attr)?;
+    let id = (*attr).__bindgen_anon_6.__bindgen_anon_1.prog_id;
 
     if target.get(&id).is_some() {
         return Ok(-1); // EPERM

@@ -69,6 +69,7 @@ dependencies = [
  "anyhow",
  "aya",
  "aya-log",
+ "aya-obj",
  "env_logger",
  "libc",
  "log",
